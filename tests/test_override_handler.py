@@ -26,6 +26,16 @@ def _apply_message(state: SessionState, message: str) -> None:
     apply_override(state, resolution)
 
 
+def _record_prior_turn(state: SessionState, message: str) -> None:
+    """Commit a prior successful turn needed for history-aware resolution."""
+
+    accumulate_information(state, extract_slots(message))
+    state.message_history.extend([
+        {"role": "user", "content": message},
+        {"role": "assistant", "content": "Here are the closest matches."},
+    ])
+
+
 def _catalog_file(directory: str) -> Path:
     """Create a minimal catalog used by Agent integration tests."""
 
@@ -158,6 +168,69 @@ class OverrideHandlerTest(unittest.TestCase):
         self.assertEqual(state.active_revealed_text, ["Belts", "leather"])
         self.assertTrue(state.override_detected)
 
+    def test_general_retraction_finds_turn_one_across_unrelated_turns(self) -> None:
+        """Prune the initial active preference without pruning newer constraints."""
+
+        for old_phrase in ("No Closure closure", "Hand Wash Only", "Pull On closure"):
+            with self.subTest(old_phrase=old_phrase):
+                state = SessionState("session")
+                _record_prior_turn(state, f"I'm looking for Belts. {old_phrase}")
+                _record_prior_turn(state, "For that, what matters is: black.")
+                _record_prior_turn(state, "For that, what matters is: size M.")
+
+                _apply_message(
+                    state,
+                    "Actually, ignore my earlier preference. What I need is: leather.",
+                )
+
+                self.assertIn(old_phrase, state.revealed_text)
+                self.assertNotIn(old_phrase, state.active_revealed_text)
+                self.assertIn("black", state.active_revealed_text)
+                self.assertIn("size M", state.active_revealed_text)
+                self.assertIn("Belts.", state.active_revealed_text)
+                self.assertIn("Belts", state.slots["category"])
+                self.assertTrue(state.override_detected)
+
+    def test_general_retraction_removes_only_old_feature_value(self) -> None:
+        """Keep unrelated active feature, material, color, and category state."""
+
+        state = SessionState("session")
+        _record_prior_turn(state, "I'm looking for Belts. Pull On closure")
+        _record_prior_turn(state, "For that, what matters is: waterproof.")
+        _record_prior_turn(state, "For that, what matters is: black.")
+
+        _apply_message(
+            state,
+            "Actually, ignore my earlier preference. What I need is: leather.",
+        )
+
+        self.assertEqual(state.slots["feature"], ["waterproof"])
+        self.assertEqual(state.slots["color"], ["black"])
+        self.assertEqual(state.slots["material"], ["leather"])
+        self.assertIn("Belts", state.slots["category"])
+        self.assertIn("waterproof", state.active_revealed_text)
+        self.assertNotIn("Pull On closure", state.active_revealed_text)
+
+    def test_general_retraction_prunes_long_raw_phrase_without_slot_invention(self) -> None:
+        """Deactivate a long raw preference while retaining historical wording."""
+
+        old_phrase = (
+            "Long torso camisole for extra coverage with spagetti adjustable "
+            "strap for perfect fit"
+        )
+        state = SessionState("session")
+        _record_prior_turn(state, f"I'm looking for Camisoles. {old_phrase}")
+        _record_prior_turn(state, "For that, what matters is: black.")
+
+        _apply_message(
+            state,
+            "Actually, ignore my earlier preference. What I need is: cotton.",
+        )
+
+        self.assertIn(old_phrase, state.revealed_text)
+        self.assertNotIn(old_phrase, state.active_revealed_text)
+        self.assertIn("black", state.active_revealed_text)
+
     def test_unrelated_constraints_are_preserved(self) -> None:
         """Keep category, material, and size during a color replacement."""
 
@@ -289,14 +362,23 @@ class OverrideAgentIntegrationTest(unittest.TestCase):
         self.agent.reset("session", {})
         state = self.agent.sessions["session"]
         state.set_constraint("color", ["black"], strength="soft")
-        state.revealed_text.append("black")
-        state.active_revealed_text.append("black")
+        state.revealed_text.extend(["black", "Hand Wash Only"])
+        state.active_revealed_text.extend(["black", "Hand Wash Only"])
+        state.message_history.extend([
+            {"role": "user", "content": "I'm looking for Shirts. Hand Wash Only"},
+            {"role": "assistant", "content": "Here are the closest matches."},
+        ])
         state.intent = "buying"
         before = copy.deepcopy(state)
         self.agent.connection.close()
 
         with self.assertRaises(sqlite3.ProgrammingError):
-            self.agent.respond("session", "Actually white instead", 1, 10)
+            self.agent.respond(
+                "session",
+                "Actually, ignore my earlier preference. What I need is: leather.",
+                1,
+                10,
+            )
 
         self.assertEqual(state, before)
 

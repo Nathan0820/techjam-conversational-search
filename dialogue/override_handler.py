@@ -81,13 +81,98 @@ def _value_rejected(message: str, value: str) -> bool:
     return any(re.search(pattern, message, re.IGNORECASE) for pattern in patterns)
 
 
-def _last_user_extraction(state: SessionState) -> SlotExtraction | None:
-    """Extract facts from the most recent user turn for explicit retraction."""
+def _prior_user_extractions(
+    state: SessionState,
+) -> tuple[tuple[str, SlotExtraction], ...]:
+    """Return every prior user turn and extraction, newest to oldest."""
 
-    for entry in reversed(state.message_history):
-        if entry.get("role") == "user":
-            return extract_slots(entry.get("content", ""))
-    return None
+    return tuple(
+        (entry.get("content", ""), extract_slots(entry.get("content", "")))
+        for entry in reversed(state.message_history)
+        if entry.get("role") == "user"
+    )
+
+
+def _is_category_only_phrase(state: SessionState, phrase: str) -> bool:
+    """Return whether an active phrase represents only the preserved category."""
+
+    extracted = extract_slots(phrase)
+    active_non_category = any(
+        value in state.slots[slot_name]
+        for slot_name in SUPPORTED_SLOTS
+        if slot_name != "category"
+        for value in extracted.slots.get(slot_name, ())
+    )
+    normalized_phrase = re.sub(r"[^a-z0-9]+", " ", phrase.casefold()).strip()
+    equals_active_category = any(
+        isinstance(value, str)
+        and normalized_phrase
+        == re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+        for value in state.slots["category"]
+    )
+    return equals_active_category and not active_non_category
+
+
+def _find_prior_active_preferences(state: SessionState) -> tuple[str, ...]:
+    """Find the earlier still-active preference targeted by general retraction.
+
+    Initial shopping turns explicitly separate category from the user's earlier
+    preference.  Prefer that trailing phrase after searching all prior turns;
+    otherwise fall back to the newest active non-category phrase.
+    """
+
+    fallback: tuple[str, ...] = ()
+    initial_preference: tuple[str, ...] = ()
+    for content, _ in _prior_user_extractions(state):
+        folded_content = content.casefold()
+        candidates = tuple(
+            phrase
+            for phrase in state.active_revealed_text
+            if phrase.casefold() in folded_content
+            and not _is_category_only_phrase(state, phrase)
+        )
+        if not candidates:
+            continue
+        if not fallback:
+            fallback = candidates
+        initial_match = re.match(
+            r"^\s*i(?:'m|\s+am)\s+looking\s+for\s+.+?[.!?]\s*(?P<phrase>.+?)\s*$",
+            content,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if initial_match:
+            trailing = initial_match.group("phrase").casefold()
+            associated = tuple(
+                phrase for phrase in candidates
+                if phrase.casefold() in trailing or trailing in phrase.casefold()
+            )
+            if associated:
+                initial_preference = associated
+    return initial_preference or fallback
+
+
+def _active_values_in_phrases(
+    state: SessionState,
+    phrases: tuple[str, ...],
+) -> dict[str, tuple[SlotValue, ...]]:
+    """Map active normalized values represented by raw phrases to their slots."""
+
+    values_by_slot: dict[str, list[SlotValue]] = {}
+    for phrase in phrases:
+        extracted = extract_slots(phrase)
+        for slot_name in SUPPORTED_SLOTS:
+            if slot_name == "category":
+                continue
+            active_values = [
+                value for value in extracted.slots.get(slot_name, ())
+                if value in state.slots[slot_name]
+            ]
+            if active_values:
+                values_by_slot.setdefault(slot_name, []).extend(active_values)
+    return {
+        slot_name: tuple(dict.fromkeys(values))
+        for slot_name, values in values_by_slot.items()
+    }
 
 
 def _active_phrases_for_values(
@@ -139,22 +224,21 @@ def resolve_override(
         if rejected:
             remove_values[slot_name] = rejected
 
+    general_retraction_phrases: tuple[str, ...] = ()
     if GENERAL_RETRACTION_PATTERN.search(user_message):
-        previous = _last_user_extraction(state)
-        if previous is not None:
-            for slot_name in SUPPORTED_SLOTS:
-                if slot_name == "category":
-                    continue
-                active_previous = tuple(
-                    value for value in previous.slots.get(slot_name, ())
-                    if value in state.slots[slot_name]
-                    and value not in extraction.slots.get(slot_name, ())
-                )
-                if active_previous:
-                    remove_values[slot_name] = tuple(dict.fromkeys([
-                        *remove_values.get(slot_name, ()),
-                        *active_previous,
-                    ]))
+        general_retraction_phrases = _find_prior_active_preferences(state)
+        for slot_name, active_previous in _active_values_in_phrases(
+            state, general_retraction_phrases,
+        ).items():
+            retained = tuple(
+                value for value in active_previous
+                if value not in extraction.slots.get(slot_name, ())
+            )
+            if retained:
+                remove_values[slot_name] = tuple(dict.fromkeys([
+                    *remove_values.get(slot_name, ()),
+                    *retained,
+                ]))
 
     replacement_values: dict[str, tuple[SlotValue, ...]] = {}
     if REPLACEMENT_PATTERN.search(user_message):
@@ -169,7 +253,7 @@ def resolve_override(
             if candidates and list(candidates) != state.slots[slot_name]:
                 replacement_values[slot_name] = candidates
 
-    phrases_to_remove: list[str] = []
+    phrases_to_remove: list[str] = list(general_retraction_phrases)
     for slot_name in clear_slots:
         phrases_to_remove.extend(_active_phrases_for_values(
             state, slot_name, tuple(state.slots[slot_name]),
