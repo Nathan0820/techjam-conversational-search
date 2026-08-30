@@ -1,3 +1,5 @@
+"""Tests for deterministic intent detection and Agent integration."""
+
 from __future__ import annotations
 
 import json
@@ -12,6 +14,8 @@ from starter.agent import Agent
 
 
 def _catalog_file(directory: str) -> Path:
+    """Create the minimal catalog fixture used by Agent integration tests."""
+
     path = Path(directory) / "catalog.jsonl"
     product = {
         "parent_asin": "A",
@@ -27,7 +31,11 @@ def _catalog_file(directory: str) -> Path:
 
 
 class IntentDetectorTest(unittest.TestCase):
+    """Verify current-message scoring and conversation-context behavior."""
+
     def test_explicit_buying_signals(self) -> None:
+        """Recognize direct purchase and recommendation requests as buying."""
+
         messages = (
             "I need a black cotton shirt under $50",
             "I'm looking to buy running shoes",
@@ -39,6 +47,8 @@ class IntentDetectorTest(unittest.TestCase):
                 self.assertEqual(detect_intent(message, SessionState("session")), "buying")
 
     def test_explicit_browsing_signals(self) -> None:
+        """Recognize direct exploration language as browsing."""
+
         messages = (
             "I'm just browsing",
             "What kinds of jackets are there?",
@@ -50,6 +60,8 @@ class IntentDetectorTest(unittest.TestCase):
                 self.assertEqual(detect_intent(message, SessionState("session")), "browsing")
 
     def test_negated_buying_is_browsing(self) -> None:
+        """Treat explicit rejection of purchase intent as browsing."""
+
         messages = (
             "I'm not looking to buy yet, just browsing",
             "I don't need anything specific yet",
@@ -58,19 +70,32 @@ class IntentDetectorTest(unittest.TestCase):
             with self.subTest(message=message):
                 self.assertEqual(detect_intent(message, SessionState("session")), "browsing")
 
+        prior_buying = SessionState("session", intent="buying")
+        for message in ("I don't want to buy yet", "I do not need to buy yet"):
+            with self.subTest(message=message, prior_intent="buying"):
+                self.assertEqual(detect_intent(message, prior_buying), "browsing")
+
     def test_previous_buying_persists_through_short_refinement(self) -> None:
+        """Preserve buying intent for an ambiguous constraint refinement."""
+
         state = SessionState("session", intent="buying")
         self.assertEqual(detect_intent("Preferably black", state), "buying")
 
     def test_previous_browsing_persists_through_exploratory_refinement(self) -> None:
+        """Preserve browsing intent for an exploratory refinement."""
+
         state = SessionState("session", intent="browsing")
         self.assertEqual(detect_intent("Maybe leather or denim", state), "browsing")
 
     def test_current_buying_signal_overrides_previous_browsing(self) -> None:
+        """Let explicit current buying evidence override browsing context."""
+
         state = SessionState("session", intent="browsing")
         self.assertEqual(detect_intent("Actually I need one under $80", state), "buying")
 
     def test_current_browsing_signal_overrides_previous_buying(self) -> None:
+        """Let explicit current browsing evidence override buying context."""
+
         state = SessionState("session", intent="buying")
         self.assertEqual(
             detect_intent("I'm not buying yet, just looking around", state),
@@ -78,6 +103,8 @@ class IntentDetectorTest(unittest.TestCase):
         )
 
     def test_assistant_messages_are_not_user_intent_evidence(self) -> None:
+        """Ignore assistant language when deriving user intent."""
+
         state = SessionState("session")
         state.message_history.append({
             "role": "assistant",
@@ -86,6 +113,8 @@ class IntentDetectorTest(unittest.TestCase):
         self.assertEqual(detect_intent("Maybe black", state), "browsing")
 
     def test_user_history_can_supply_context_when_intent_is_unset(self) -> None:
+        """Use recent user history when stored intent has not been set."""
+
         state = SessionState("session")
         state.message_history.extend([
             {"role": "user", "content": "I need running shoes"},
@@ -94,11 +123,15 @@ class IntentDetectorTest(unittest.TestCase):
         self.assertEqual(detect_intent("Preferably black", state), "buying")
 
     def test_empty_or_ambiguous_first_message_defaults_to_browsing(self) -> None:
+        """Use browsing as the conservative no-signal fallback."""
+
         for message in ("", "Maybe", "black cotton"):
             with self.subTest(message=message):
                 self.assertEqual(detect_intent(message, SessionState("session")), "browsing")
 
     def test_strong_structured_search_can_imply_buying(self) -> None:
+        """Infer buying from a sufficiently structured active search."""
+
         self.assertEqual(
             detect_intent(
                 "black cotton shirt size M under $40 for work",
@@ -109,15 +142,23 @@ class IntentDetectorTest(unittest.TestCase):
 
 
 class IntentAgentIntegrationTest(unittest.TestCase):
+    """Verify intent lifecycle behavior inside the baseline Agent."""
+
     def setUp(self) -> None:
+        """Create an Agent backed by a temporary one-product catalog."""
+
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.agent = Agent(_catalog_file(self.temporary_directory.name))
 
     def tearDown(self) -> None:
+        """Close the Agent database and remove its temporary catalog."""
+
         self.agent.connection.close()
         self.temporary_directory.cleanup()
 
     def test_browsing_transitions_to_buying_after_successful_response(self) -> None:
+        """Commit a browsing-to-buying transition after successful turns."""
+
         self.agent.reset("session", {})
 
         self.agent.respond("session", "What kinds of running shoes are good?", 1, 10)
@@ -134,6 +175,8 @@ class IntentAgentIntegrationTest(unittest.TestCase):
         self.assertEqual(len(state.slots["budget"]), 1)
 
     def test_failed_response_does_not_commit_new_intent(self) -> None:
+        """Keep prior state unchanged when retrieval raises."""
+
         self.agent.reset("session", {})
         state = self.agent.sessions["session"]
         state.intent = "browsing"

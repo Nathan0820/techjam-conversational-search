@@ -1,3 +1,5 @@
+"""Deterministic current-session shopping intent classification."""
+
 from __future__ import annotations
 
 import re
@@ -28,6 +30,7 @@ BROWSING_PATTERNS = (
     r"\bjust\s+looking\b",
     r"\blooking\s+around\b",
     r"\bnot\s+(?:looking\s+to\s+buy|buying|ready\s+to\s+buy)\b",
+    r"\b(?:do\s+not|don't)\s+(?:need|want)\s+to\s+buy\b",
     r"\b(?:do\s+not|don't)\s+need\s+anything\s+specific\b",
     r"\bnot\s+sure\b",
     r"\bi(?:'m|\s+am)\s+exploring\b",
@@ -40,10 +43,14 @@ BROWSING_PATTERNS = (
 
 
 def _contains_any(text: str, patterns: tuple[str, ...]) -> bool:
+    """Return whether text matches at least one case-insensitive pattern."""
+
     return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
 
 
 def _without_negated_buying(text: str) -> str:
+    """Remove negated buying spans before scoring positive buying evidence."""
+
     for pattern in NEGATED_BUYING_PATTERNS:
         text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
     return text

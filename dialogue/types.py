@@ -1,3 +1,5 @@
+"""Shared value types used by dialogue state and extraction components."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
