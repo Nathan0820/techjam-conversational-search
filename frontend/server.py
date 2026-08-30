@@ -40,6 +40,11 @@ def load_metrics() -> dict[str, Any]:
 class App:
     def __init__(self) -> None:
         self.agent = Agent(CATALOG_PATH)
+        self.catalog_by_asin = {}
+        with CATALOG_PATH.open(encoding="utf-8") as handle:
+            for line in handle:
+                product = json.loads(line)
+                self.catalog_by_asin[str(product["parent_asin"])] = product
 
     def reset(self, session_id: str | None = None) -> str:
         identifier = session_id or uuid.uuid4().hex
@@ -62,7 +67,7 @@ class App:
         recommendations = []
         for recommendation in response["recommendations"]:
             parent_asin = recommendation["parent_asin"]
-            product = self.agent.catalog_by_asin.get(parent_asin, {})
+            product = self.catalog_by_asin.get(parent_asin, {})
             categories = product.get("categories") or []
             recommendations.append({
                 **recommendation,

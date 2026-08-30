@@ -111,7 +111,7 @@ form.addEventListener("submit", async event => {
   input.value = "";
   input.disabled = true;
   sendButton.disabled = true;
-  statusText.textContent = "Retrieving 500 candidates and reranking…";
+  statusText.textContent = "Searching the product catalog…";
   try {
     const response = await fetch("/api/chat", {
       method: "POST",
