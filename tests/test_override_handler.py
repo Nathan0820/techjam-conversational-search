@@ -119,8 +119,16 @@ class OverrideHandlerTest(unittest.TestCase):
 
         state = SessionState("session")
         state.add_slot_values("color", ["black", "blue"])
-        _apply_message(state, "Not black")
+        state.revealed_text.extend(["black", "blue", "cotton"])
+        state.active_revealed_text.extend(["black", "blue", "cotton"])
+        extraction = SlotExtraction(revealed_text=["black"])
+        extraction.slots["color"] = ["black"]
+        resolution = resolve_override("Not black", state, extraction)
+        accumulate_information(state, extraction)
+        apply_override(state, resolution)
         self.assertEqual(state.slots["color"], ["blue"])
+        self.assertEqual(state.revealed_text, ["black", "blue", "cotton"])
+        self.assertEqual(state.active_revealed_text, ["blue", "cotton"])
 
     def test_general_retraction_removes_last_preference_across_slots(self) -> None:
         """Retract the last stated preference when a new slot is introduced."""
@@ -128,6 +136,8 @@ class OverrideHandlerTest(unittest.TestCase):
         state = SessionState("session")
         state.add_slot_values("category", ["Belts"])
         state.add_slot_values("feature", ["buckle closure"])
+        state.revealed_text.extend(["Belts", "Buckle closure"])
+        state.active_revealed_text.extend(["Belts", "Buckle closure"])
         state.message_history.extend([
             {"role": "user", "content": "I'm looking for Belts. Buckle closure"},
             {"role": "assistant", "content": "Here are the closest matches."},
@@ -141,6 +151,11 @@ class OverrideHandlerTest(unittest.TestCase):
         self.assertEqual(state.slots["category"], ["Belts"])
         self.assertEqual(state.slots["feature"], [])
         self.assertEqual(state.slots["material"], ["leather"])
+        self.assertEqual(
+            state.revealed_text,
+            ["Belts", "Buckle closure", "leather"],
+        )
+        self.assertEqual(state.active_revealed_text, ["Belts", "leather"])
         self.assertTrue(state.override_detected)
 
     def test_unrelated_constraints_are_preserved(self) -> None:
@@ -181,19 +196,47 @@ class OverrideHandlerTest(unittest.TestCase):
         state = SessionState("session")
         state.add_slot_values("color", ["black"])
         state.revealed_text.append("black")
+        state.active_revealed_text.append("black")
         state.message_history.append({"role": "user", "content": "black"})
         history_before = copy.deepcopy(state.message_history)
         _apply_message(state, "Actually white instead")
         self.assertEqual(state.revealed_text, ["black", "white"])
+        self.assertEqual(state.active_revealed_text, ["white"])
         self.assertEqual(state.message_history, history_before)
 
-    def test_actual_word_without_correction_does_not_set_flag(self) -> None:
-        """Avoid flagging override language when no state correction occurs."""
+    def test_explicit_override_without_stored_value_sets_flag(self) -> None:
+        """Record explicit override intent even when no prior value can change."""
 
         state = SessionState("session")
         _apply_message(state, "Actually white instead")
         self.assertEqual(state.slots["color"], ["white"])
-        self.assertFalse(state.override_detected)
+        self.assertTrue(state.override_detected)
+
+    def test_evaluator_style_override_without_matching_value_sets_flag(self) -> None:
+        """Detect evaluator-style correction language without a mutable match."""
+
+        state = SessionState("session")
+        _apply_message(
+            state,
+            "Actually, ignore my earlier preference. What I need is: leather.",
+        )
+        self.assertEqual(state.slots["material"], ["leather"])
+        self.assertTrue(state.override_detected)
+
+    def test_replacement_removes_only_stale_active_phrase(self) -> None:
+        """Deactivate replaced color wording while preserving unrelated phrases."""
+
+        state = SessionState("session")
+        state.add_slot_values("color", ["black"])
+        state.add_slot_values("material", ["cotton"])
+        state.revealed_text.extend(["black", "cotton"])
+        state.active_revealed_text.extend(["black", "cotton"])
+
+        _apply_message(state, "Actually white instead")
+
+        self.assertEqual(state.slots["color"], ["white"])
+        self.assertEqual(state.revealed_text, ["black", "cotton", "white"])
+        self.assertEqual(state.active_revealed_text, ["cotton", "white"])
 
 
 class OverrideAgentIntegrationTest(unittest.TestCase):
@@ -246,6 +289,8 @@ class OverrideAgentIntegrationTest(unittest.TestCase):
         self.agent.reset("session", {})
         state = self.agent.sessions["session"]
         state.set_constraint("color", ["black"], strength="soft")
+        state.revealed_text.append("black")
+        state.active_revealed_text.append("black")
         state.intent = "buying"
         before = copy.deepcopy(state)
         self.agent.connection.close()

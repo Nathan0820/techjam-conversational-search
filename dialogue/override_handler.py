@@ -41,6 +41,18 @@ class OverrideResolution:
     clear_slots: tuple[str, ...] = ()
     remove_values: dict[str, tuple[SlotValue, ...]] = field(default_factory=dict)
     replacement_values: dict[str, tuple[SlotValue, ...]] = field(default_factory=dict)
+    remove_active_revealed_text: tuple[str, ...] = ()
+
+    @property
+    def has_state_mutations(self) -> bool:
+        """Return whether this resolution changes operational slot/raw state."""
+
+        return bool(
+            self.clear_slots
+            or self.remove_values
+            or self.replacement_values
+            or self.remove_active_revealed_text
+        )
 
 
 def _clear_requested(message: str, terms: tuple[str, ...]) -> bool:
@@ -78,6 +90,28 @@ def _last_user_extraction(state: SessionState) -> SlotExtraction | None:
     return None
 
 
+def _active_phrases_for_values(
+    state: SessionState,
+    slot_name: str,
+    values: tuple[SlotValue, ...],
+) -> tuple[str, ...]:
+    """Find active raw phrases associated with normalized values in one slot."""
+
+    associated: list[str] = []
+    for phrase in state.active_revealed_text:
+        extracted_values = extract_slots(phrase).slots.get(slot_name, ())
+        if any(value in extracted_values for value in values):
+            associated.append(phrase)
+            continue
+        folded_phrase = phrase.casefold()
+        if any(
+            isinstance(value, str) and value.casefold() in folded_phrase
+            for value in values
+        ):
+            associated.append(phrase)
+    return tuple(associated)
+
+
 def resolve_override(
     user_message: str,
     state: SessionState,
@@ -85,11 +119,14 @@ def resolve_override(
 ) -> OverrideResolution:
     """Compute explicit replacement, clearing, and targeted-removal actions."""
 
-    clear_slots = tuple(
+    requested_clear_slots = tuple(
         slot_name
         for slot_name in SUPPORTED_SLOTS
+        if _clear_requested(user_message, SLOT_TERMS[slot_name])
+    )
+    clear_slots = tuple(
+        slot_name for slot_name in requested_clear_slots
         if state.slots[slot_name]
-        and _clear_requested(user_message, SLOT_TERMS[slot_name])
     )
 
     remove_values: dict[str, tuple[SlotValue, ...]] = {}
@@ -132,12 +169,36 @@ def resolve_override(
             if candidates and list(candidates) != state.slots[slot_name]:
                 replacement_values[slot_name] = candidates
 
-    detected = bool(clear_slots or remove_values or replacement_values)
+    phrases_to_remove: list[str] = []
+    for slot_name in clear_slots:
+        phrases_to_remove.extend(_active_phrases_for_values(
+            state, slot_name, tuple(state.slots[slot_name]),
+        ))
+    for slot_name, values in remove_values.items():
+        phrases_to_remove.extend(_active_phrases_for_values(state, slot_name, values))
+    for slot_name, replacements in replacement_values.items():
+        stale_values = tuple(
+            value for value in state.slots[slot_name]
+            if value not in replacements
+        )
+        phrases_to_remove.extend(_active_phrases_for_values(
+            state, slot_name, stale_values,
+        ))
+
+    remove_active_revealed_text = tuple(dict.fromkeys(phrases_to_remove))
+    has_extracted_values = any(extraction.slots.get(name) for name in SUPPORTED_SLOTS)
+    explicitly_expressed = bool(
+        GENERAL_RETRACTION_PATTERN.search(user_message)
+        or requested_clear_slots
+        or remove_values
+        or (REPLACEMENT_PATTERN.search(user_message) and has_extracted_values)
+    )
     return OverrideResolution(
-        detected=detected,
+        detected=explicitly_expressed,
         clear_slots=clear_slots,
         remove_values=remove_values,
         replacement_values=replacement_values,
+        remove_active_revealed_text=remove_active_revealed_text,
     )
 
 
@@ -152,5 +213,11 @@ def apply_override(state: SessionState, resolution: OverrideResolution) -> None:
     for slot_name, values in resolution.replacement_values.items():
         if slot_name not in resolution.clear_slots:
             state.set_constraint(slot_name, values)
+    if resolution.remove_active_revealed_text:
+        stale_phrases = set(resolution.remove_active_revealed_text)
+        state.active_revealed_text = [
+            phrase for phrase in state.active_revealed_text
+            if phrase not in stale_phrases
+        ]
     if resolution.detected:
         state.override_detected = True

@@ -23,3 +23,5 @@ def accumulate_information(state: SessionState, extraction: SlotExtraction) -> N
     for phrase in extraction.revealed_text:
         if phrase not in state.revealed_text:
             state.revealed_text.append(phrase)
+        if phrase not in state.active_revealed_text:
+            state.active_revealed_text.append(phrase)
