@@ -82,11 +82,16 @@ class InformationAccumulatorTest(unittest.TestCase):
             state.revealed_text,
             ["100% Leather", "Rubber sole", "leather"],
         )
+        self.assertEqual(
+            state.active_revealed_text,
+            ["100% Leather", "Rubber sole", "leather"],
+        )
 
     def test_empty_extraction_changes_nothing(self) -> None:
         state = SessionState(session_id="session")
         state.add_slot_values("color", ["black"])
         state.revealed_text.append("Black")
+        state.active_revealed_text.append("Black")
         before = copy.deepcopy(state)
 
         accumulate_information(state, SlotExtraction())
@@ -104,6 +109,20 @@ class InformationAccumulatorTest(unittest.TestCase):
 
         self.assertEqual(state.slots["color"], [])
         self.assertEqual(state.revealed_text, [])
+        self.assertEqual(state.active_revealed_text, [])
+
+    def test_lossy_raw_feature_text_remains_active(self) -> None:
+        """Retain raw catalog-like text even when no structured slot captures it."""
+
+        state = SessionState("session")
+        extraction = SlotExtraction(revealed_text=[
+            "Thermolite insulation rated to -15F for all-day warmth",
+        ])
+
+        accumulate_information(state, extraction)
+
+        self.assertEqual(state.revealed_text, extraction.revealed_text)
+        self.assertEqual(state.active_revealed_text, extraction.revealed_text)
 
     def test_does_not_modify_other_dialogue_state(self) -> None:
         state = SessionState(session_id="session", intent="browsing")

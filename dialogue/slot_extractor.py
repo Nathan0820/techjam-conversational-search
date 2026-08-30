@@ -56,6 +56,30 @@ GENERIC_CATEGORIES = {
 }
 GENERIC_BRANDS = {"unknown", "generic", "men", "women", "amazon"}
 TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9&'’+.-]*")
+INITIAL_PREFERENCE_RE = re.compile(
+    r"^\s*i(?:'m|\s+am)\s+looking\s+for\s+.+?[.!?]\s*(?P<phrase>.+?)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+EXPLICIT_REVEAL_RE = re.compile(
+    r"\b(?:key\s+requirement\s+is|what\s+matters\s+is|what\s+i\s+need\s+is)\s*:",
+    re.IGNORECASE,
+)
+OVERRIDE_SCAFFOLD_RE = re.compile(
+    r"\b(?:actually|ignore\s+my\s+earlier\s+preference|forget\s+that|"
+    r"scratch\s+that|never\s+mind|i\s+changed\s+my\s+mind)\b",
+    re.IGNORECASE,
+)
+FILLER_RE = re.compile(
+    r"^\s*(?:thanks?(?:\s+you)?|okay|ok|what\s+do\s+you\s+have|"
+    r"show\s+me\s+(?:some\s+)?options?|anything\s+else)\s*[.!?]*\s*$",
+    re.IGNORECASE,
+)
+PRODUCT_ATTRIBUTE_RE = re.compile(
+    r"\b(?:band|bracelet|button|closure|collar|comfort|coverage|cuff|department|"
+    r"fit|heel|length|lined|lining|midsole|neck|pocket|rise|size|sleeve|sole|"
+    r"strap|torso|vamp|wash|waist|waterproof|width|zip|zipper)\b",
+    re.IGNORECASE,
+)
 
 
 @lru_cache(maxsize=1)
@@ -121,6 +145,39 @@ def _extract_explicit_reveals(message: str, result: SlotExtraction) -> None:
             continue
         for phrase in re.split(r"\s*;\s*", match.group(1)):
             _add_raw(result, phrase.rstrip(".?!"))
+
+
+def _has_known_product_term(message: str) -> bool:
+    """Return whether text contains a deterministic shopping attribute term."""
+
+    terms = (*MATERIALS, *COLORS, *STYLE_PHRASES, *FEATURE_PHRASES, *USE_CASE_PHRASES)
+    return any(
+        re.search(rf"(?i)(?<!\w){re.escape(term)}(?!\w)", message)
+        for term in terms
+    )
+
+
+def _looks_like_product_description(phrase: str) -> bool:
+    """Conservatively recognize a standalone catalog-like descriptive phrase."""
+
+    words = TOKEN_RE.findall(phrase)
+    if not 2 <= len(words) <= 60 or FILLER_RE.fullmatch(phrase):
+        return False
+    return bool(PRODUCT_ATTRIBUTE_RE.search(phrase) or _has_known_product_term(phrase))
+
+
+def _extract_descriptive_reveals(message: str, result: SlotExtraction) -> None:
+    """Preserve useful raw product wording without inventing normalized slots."""
+
+    initial_match = INITIAL_PREFERENCE_RE.match(message)
+    if initial_match:
+        _add_raw(result, initial_match.group("phrase").strip())
+        return
+    if EXPLICIT_REVEAL_RE.search(message) or OVERRIDE_SCAFFOLD_RE.search(message):
+        return
+    phrase = message.strip().rstrip(".?!")
+    if _looks_like_product_description(phrase):
+        _add_raw(result, phrase)
 
 
 def _extract_terms(message: str, result: SlotExtraction, slot: str, terms: tuple[str, ...]) -> None:
@@ -224,6 +281,7 @@ def extract_slots(user_message: str) -> SlotExtraction:
     if not user_message or not user_message.strip():
         return result
     _extract_explicit_reveals(user_message, result)
+    _extract_descriptive_reveals(user_message, result)
     _extract_budget(user_message, result)
     _extract_sizes(user_message, result)
     _extract_terms(user_message, result, "material", MATERIALS)

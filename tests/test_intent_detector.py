@@ -190,6 +190,7 @@ class IntentAgentIntegrationTest(unittest.TestCase):
         self.assertEqual(state.message_history, [])
         self.assertTrue(all(not values for values in state.slots.values()))
         self.assertEqual(state.revealed_text, [])
+        self.assertEqual(state.active_revealed_text, [])
 
 
 if __name__ == "__main__":

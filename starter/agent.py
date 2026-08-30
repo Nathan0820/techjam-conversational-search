@@ -10,6 +10,7 @@ from pathlib import Path
 
 from dialogue.accumulator import accumulate_information
 from dialogue.intent_detector import detect_intent
+from dialogue.override_handler import apply_override, resolve_override
 from dialogue.slot_extractor import extract_slots
 from dialogue.state import SessionState
 from src.ranking.reranker import Reranker, to_evaluator_recommendations
@@ -168,15 +169,19 @@ class Agent:
         state = self.sessions[session_id]
         extraction = extract_slots(user_message)
         detected_intent = detect_intent(user_message, state, extraction)
+        override_resolution = resolve_override(user_message, state, extraction)
         ranking_state = deepcopy(state)
         accumulate_information(ranking_state, extraction)
+        apply_override(ranking_state, override_resolution)
         ranking_state.intent = detected_intent
         # Step 7 - build the query from every customer turn so far, including this one,
         # so constraints revealed earlier in the session still influence retrieval.
         # Nothing is written to state yet: if retrieval raises, the turn must leave the
         # session untouched. Switching this to state.revealed_text is a separate change.
         prior_messages = [
-            entry["content"] for entry in state.message_history if entry["role"] == "user"
+            entry["content"]
+            for entry in state.message_history
+            if entry["role"] == "user"
         ]
         query = " ".join([*prior_messages, user_message])
         # Step 8 - retrieve a recall-oriented pool, hydrate its catalog metadata,
@@ -197,5 +202,6 @@ class Agent:
             {"role": "assistant", "content": response["message"]},
         ])
         accumulate_information(state, extraction)
+        apply_override(state, override_resolution)
         state.intent = detected_intent
         return response
