@@ -1,3 +1,5 @@
+"""Local BM25 shopping agent with persistent dialogue state plumbing."""
+
 from __future__ import annotations
 
 import json
@@ -7,6 +9,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from dialogue.accumulator import accumulate_information
+from dialogue.intent_detector import detect_intent
 from dialogue.slot_extractor import extract_slots
 from dialogue.state import SessionState
 
@@ -20,6 +23,8 @@ STOPWORDS = {
 
 
 def _text(value: object) -> str:
+    """Flatten a catalog field into searchable text."""
+
     if value is None:
         return ""
     if isinstance(value, dict):
@@ -30,6 +35,8 @@ def _text(value: object) -> str:
 
 
 def _terms(text: str) -> list[str]:
+    """Extract unique-query candidates after basic stop-word filtering."""
+
     return [
         token.lower()
         for token in TOKEN_RE.findall(text)
@@ -59,12 +66,16 @@ class Agent:
     """Editable weak baseline: stateless BM25 retrieval with no LLM dependency."""
 
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
+        """Build the catalog index and initialize the session registry."""
+
         self.catalog_path = Path(catalog_path)
         self.connection = sqlite3.connect(":memory:")
         self.sessions: dict[str, SessionState] = {}
         self._build_index()
 
     def _build_index(self) -> None:
+        """Load catalog records into the in-memory FTS5 index."""
+
         cursor = self.connection.cursor()
         cursor.execute(
             "CREATE VIRTUAL TABLE products USING fts5("
@@ -94,6 +105,8 @@ class Agent:
         self.connection.commit()
 
     def reset(self, session_id: str, user_profile: dict) -> None:
+        """Replace a session with fresh state and a copied user profile."""
+
         # The profile is anonymized and may be used for personalization.
         self.sessions[session_id] = SessionState(
             session_id=session_id,
@@ -125,10 +138,13 @@ class Agent:
         turn: int,
         top_k: int,
     ) -> dict:
+        """Return baseline recommendations and commit state after success."""
+
         if session_id not in self.sessions:
             raise RuntimeError("reset must be called before respond")
         state = self.sessions[session_id]
         extraction = extract_slots(user_message)
+        detected_intent = detect_intent(user_message, state, extraction)
         # Step 7 - build the query from every customer turn so far, including this one,
         # so constraints revealed earlier in the session still influence retrieval.
         # Nothing is written to state yet: if retrieval raises, the turn must leave the
@@ -153,4 +169,5 @@ class Agent:
             {"role": "assistant", "content": response["message"]},
         ])
         accumulate_information(state, extraction)
+        state.intent = detected_intent
         return response
