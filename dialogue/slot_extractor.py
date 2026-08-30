@@ -89,7 +89,7 @@ def _ngrams(message: str, maximum: int = 5) -> list[tuple[str, str]]:
         for start in range(len(tokens) - length + 1):
             end = start + length - 1
             raw = message[tokens[start].start():tokens[end].end()]
-            result.append((raw.casefold(), raw))
+            result.append((raw.rstrip(".,!?;:").casefold(), raw))
     return result
 
 

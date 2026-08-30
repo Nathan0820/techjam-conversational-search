@@ -39,6 +39,12 @@ class SlotExtractorTest(unittest.TestCase):
         self.assertIn("Columbia", result.slots["brand"])
         self.assertIn("T-Shirts", result.slots["category"])
 
+    def test_detects_catalog_category_before_terminal_punctuation(self) -> None:
+        result = extract_slots("I am looking for Boots.")
+
+        self.assertEqual(result.slots["category"], ["Boots"])
+        self.assertIn("Boots.", result.revealed_text)
+
     def test_extracts_sizes_with_punctuation_and_deduplicates(self) -> None:
         result = extract_slots("Size: xl, or XL; shoe size 8.5!")
 
