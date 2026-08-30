@@ -6,7 +6,7 @@ import unittest
 from dataclasses import fields
 from pathlib import Path
 
-from dialogue.state import SessionState
+from dialogue.state import SUPPORTED_SLOTS, SessionState
 from starter.agent import Agent
 
 
@@ -31,13 +31,16 @@ class SessionStateTest(unittest.TestCase):
 
         self.assertIsNone(state.intent)
         self.assertEqual(state.user_profile, {})
-        self.assertEqual(state.slots, {})
-        self.assertEqual(state.hard_constraints, {})
-        self.assertEqual(state.soft_preferences, {})
+        self.assertEqual(set(state.slots), set(SUPPORTED_SLOTS))
+        self.assertTrue(all(values == [] for values in state.slots.values()))
+        self.assertEqual(state.hard_constraints, set())
+        self.assertEqual(state.soft_preferences, set())
         self.assertEqual(state.asked_attributes, set())
+        self.assertIsNone(state.last_ask_yielded)
         self.assertEqual(state.turn, 0)
         self.assertFalse(state.override_detected)
         self.assertEqual(state.message_history, [])
+        self.assertEqual(state.revealed_text, [])
 
         field_names = {item.name for item in fields(SessionState)}
         evaluator_only = {
@@ -51,17 +54,20 @@ class SessionStateTest(unittest.TestCase):
         first = SessionState(session_id="one")
         second = SessionState(session_id="two")
 
-        first.slots["color"] = "blue"
-        first.hard_constraints["material"] = "cotton"
-        first.soft_preferences["style"] = "casual"
+        first.slots["color"].append("blue")
+        first.hard_constraints.add("material")
+        first.soft_preferences.add("style")
         first.asked_attributes.add("size")
         first.message_history.append("hello")
+        first.revealed_text.append("color: blue")
 
-        self.assertEqual(second.slots, {})
-        self.assertEqual(second.hard_constraints, {})
-        self.assertEqual(second.soft_preferences, {})
+        self.assertEqual(second.slots["color"], [])
+        self.assertIsNot(first.slots["color"], second.slots["color"])
+        self.assertEqual(second.hard_constraints, set())
+        self.assertEqual(second.soft_preferences, set())
         self.assertEqual(second.asked_attributes, set())
         self.assertEqual(second.message_history, [])
+        self.assertEqual(second.revealed_text, [])
 
 
 class AgentSessionLifecycleTest(unittest.TestCase):
@@ -87,6 +93,7 @@ class AgentSessionLifecycleTest(unittest.TestCase):
         )
         self.assertEqual(state.asked_attributes, set())
         self.assertEqual(state.message_history, [])
+        self.assertEqual(state.revealed_text, [])
 
     def test_respond_appends_messages_in_order_and_updates_turn(self) -> None:
         self.agent.reset("session", {})
@@ -96,6 +103,7 @@ class AgentSessionLifecycleTest(unittest.TestCase):
 
         state = self.agent.sessions["session"]
         self.assertEqual(state.message_history, ["first message", "second message"])
+        self.assertEqual(state.revealed_text, [])
         self.assertEqual(state.turn, 2)
         self.assertIn("recommendations", first_response)
         self.assertIn("recommendations", second_response)
@@ -103,8 +111,13 @@ class AgentSessionLifecycleTest(unittest.TestCase):
     def test_resetting_same_session_clears_previous_state(self) -> None:
         self.agent.reset("session", {"summary": "old"})
         old_state = self.agent.sessions["session"]
-        old_state.slots["color"] = "blue"
+        old_state.slots["color"].append("blue")
+        old_state.hard_constraints.add("color")
+        old_state.soft_preferences.add("brand")
         old_state.asked_attributes.add("size")
+        old_state.last_ask_yielded = True
+        old_state.override_detected = True
+        old_state.revealed_text.append("blue")
         self.agent.respond("session", "old message", 4, 10)
 
         self.agent.reset("session", {"summary": "new"})
@@ -112,9 +125,15 @@ class AgentSessionLifecycleTest(unittest.TestCase):
         new_state = self.agent.sessions["session"]
         self.assertIsNot(new_state, old_state)
         self.assertEqual(new_state.user_profile, {"summary": "new"})
-        self.assertEqual(new_state.slots, {})
+        self.assertEqual(set(new_state.slots), set(SUPPORTED_SLOTS))
+        self.assertTrue(all(values == [] for values in new_state.slots.values()))
+        self.assertEqual(new_state.hard_constraints, set())
+        self.assertEqual(new_state.soft_preferences, set())
         self.assertEqual(new_state.asked_attributes, set())
+        self.assertIsNone(new_state.last_ask_yielded)
+        self.assertFalse(new_state.override_detected)
         self.assertEqual(new_state.message_history, [])
+        self.assertEqual(new_state.revealed_text, [])
         self.assertEqual(new_state.turn, 0)
 
     def test_sessions_do_not_share_mutable_state(self) -> None:
