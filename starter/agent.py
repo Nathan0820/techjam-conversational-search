@@ -32,13 +32,20 @@ def _terms(text: str) -> list[str]:
     ]
 
 
+# STUB (owned by role B, replace with the real ask policy). Cycling through a few
+# attributes is enough to stop the simulated customer returning content-free replies,
+# which is what the retrieval work needs in order to be measurable at all.
+STUB_ASK_CYCLE = ("feature", "material", "color")
+
+
 class Agent:
     """Editable weak baseline: stateless BM25 retrieval with no LLM dependency."""
 
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
         self.catalog_path = Path(catalog_path)
         self.connection = sqlite3.connect(":memory:")
-        self._sessions: set[str] = set()
+        # session_id -> every customer message seen so far, oldest first.
+        self._sessions: dict[str, list[str]] = {}
         self._build_index()
 
     def _build_index(self) -> None:
@@ -72,7 +79,7 @@ class Agent:
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         # The profile is anonymized and may be used for personalization.
-        self._sessions.add(session_id)
+        self._sessions[session_id] = []
 
     def respond(
         self,
@@ -83,7 +90,11 @@ class Agent:
     ) -> dict:
         if session_id not in self._sessions:
             raise RuntimeError("reset must be called before respond")
-        unique_terms = list(dict.fromkeys(_terms(user_message)))[:40]
+        history = self._sessions[session_id]
+        history.append(user_message)
+        # Query from every turn so far, not just the newest message, so constraints
+        # revealed earlier in the session still influence retrieval.
+        unique_terms = list(dict.fromkeys(_terms(" ".join(history))))[:40]
         expression = " OR ".join(f'"{term}"' for term in unique_terms)
         if not expression:
             recommendations: list[dict] = []
@@ -96,7 +107,7 @@ class Agent:
             recommendations = [{"parent_asin": str(row[0])} for row in rows]
         return {
             "message": "Here are the closest matches I found.",
-            "ask_attribute": None,
+            "ask_attribute": STUB_ASK_CYCLE[(turn - 1) % len(STUB_ASK_CYCLE)],
             "recommendations": recommendations,
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
