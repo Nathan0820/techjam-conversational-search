@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable
 
+from .types import SlotValue
+
 
 SUPPORTED_SLOTS = (
     "category",
@@ -17,7 +19,7 @@ SUPPORTED_SLOTS = (
 )
 
 
-def _empty_slots() -> dict[str, list[str]]:
+def _empty_slots() -> dict[str, list[SlotValue]]:
     return {name: [] for name in SUPPORTED_SLOTS}
 
 
@@ -43,7 +45,7 @@ class SessionState:
     session_id: str
     user_profile: dict = field(default_factory=dict)
     intent: str | None = None
-    slots: dict[str, list[str]] = field(default_factory=_empty_slots)
+    slots: dict[str, list[SlotValue]] = field(default_factory=_empty_slots)
     hard_constraints: set[str] = field(default_factory=set)
     soft_preferences: set[str] = field(default_factory=set)
     asked_attributes: set[str] = field(default_factory=set)
@@ -56,7 +58,7 @@ class SessionState:
     def set_constraint(
         self,
         slot_name: str,
-        values: Iterable[str],
+        values: Iterable[SlotValue],
         strength: str | None = None,
     ) -> None:
         """Replace one slot's values and keep hard/soft labels consistent.
@@ -79,6 +81,15 @@ class SessionState:
             self.hard_constraints.add(slot_name)
         elif strength == "soft":
             self.soft_preferences.add(slot_name)
+
+    def add_slot_values(self, slot_name: str, values: Iterable[SlotValue]) -> None:
+        """Append new unclassified values while preserving order and labels."""
+
+        self._validate_slot_name(slot_name)
+        current_values = self.slots[slot_name]
+        for value in values:
+            if value not in current_values:
+                current_values.append(value)
 
     def clear_constraint(self, slot_name: str) -> None:
         """Clear a slot's values and remove all strength classification."""

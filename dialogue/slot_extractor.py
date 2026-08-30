@@ -5,25 +5,9 @@ import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import TypeAlias
 
 from .state import SUPPORTED_SLOTS
-
-
-Number: TypeAlias = int | float
-
-
-@dataclass(frozen=True)
-class BudgetConstraint:
-    """A monetary bound extracted without performing currency conversion."""
-
-    minimum: Number | None = None
-    maximum: Number | None = None
-    currency: str | None = None
-    approximate: bool = False
-
-
-SlotValue: TypeAlias = str | BudgetConstraint
+from .types import BudgetConstraint, Number, SlotValue
 
 
 def _empty_extracted_slots() -> dict[str, list[SlotValue]]:
