@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from dataclasses import dataclass
 
-from src.ranking.features import extract_features
+from src.ranking.features import extract_features, state_to_query
 from src.ranking.diagnostics import ranking_failure_record
 from src.ranking.reranker import Reranker, rerank, to_evaluator_recommendations
 
@@ -66,6 +66,24 @@ class RankingTest(unittest.TestCase):
         candidates = [product("wrong", "Red shoes", price=200, dense_score=1), product("right", "Red shoes", price=90)]
         state = {"scenario_type": "buying", "hard_constraints": {"max_price": 100}}
         self.assertEqual(rerank(candidates, state)[0]["product"]["parent_asin"], "right")
+
+    def test_member_b_session_state_schema(self) -> None:
+        state = {
+            "intent": "buying",
+            "slots": {"category": "boots", "color": "black", "brand": "Nike"},
+            "hard_constraints": {"category": "boots", "budget": 150},
+            "soft_preferences": {"waterproof": True},
+            "asked_attributes": {"material", "color"},
+            "turn": 3,
+            "override_detected": False,
+            "specificity": "high",
+        }
+        query = state_to_query(state)
+        self.assertIn("boots", query)
+        self.assertIn("waterproof", query)
+        self.assertNotIn("asked_attributes", query)
+        candidates = [product("over", "Black Nike boots", price=200), product("target", "Black Nike waterproof boots", price=120)]
+        self.assertEqual(rerank(candidates, state)[0]["product"]["parent_asin"], "target")
 
     def test_missing_constraints(self) -> None:
         candidates = [product("low", "A", average_rating=2), product("high", "B", average_rating=5)]

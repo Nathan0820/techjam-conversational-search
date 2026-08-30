@@ -167,6 +167,8 @@ def extract_features(product: Mapping[str, Any], state: object) -> ProductFeatur
 
 def state_to_query(state: object) -> str:
     active = [
+        state_value(state, "intent", ""),
+        state_value(state, "slots", {}),
         state_value(state, "hard_constraints", {}),
         state_value(state, "soft_preferences", {}),
         state_value(state, "negative_preferences", {}),

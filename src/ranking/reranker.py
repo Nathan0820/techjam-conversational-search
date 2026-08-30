@@ -76,7 +76,10 @@ class Reranker:
         dense = _minmax([item.dense_score for item in features])
         ratings = [min(1.0, max(0.0, (item.rating or 0.0) / 5.0)) for item in features]
         reviews = _minmax([item.review_count for item in features], log_scale=True)
-        scenario = str(state_value(state, "scenario_type", "")).lower()
+        scenario = str(
+            state_value(state, "intent", None)
+            or state_value(state, "scenario_type", "")
+        ).lower()
 
         scored: list[dict[str, Any]] = []
         for index, (product, item) in enumerate(zip(cands, features)):
