@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ShopTalk Lab</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <p class="eyebrow">TechJam test console</p>
+        <h1>ShopTalk <span>Lab</span></h1>
+        <p class="subtitle">Try the full conversational retrieval and reranking pipeline.</p>
+      </div>
+      <button id="new-session" class="secondary">New session</button>
+    </header>
+
+    <section class="metrics" aria-label="Latest evaluation performance">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Latest public-set run</p>
+          <h2>Performance</h2>
+        </div>
+        <span id="sample-count" class="pill">Loading…</span>
+      </div>
+      <div id="metric-grid" class="metric-grid"></div>
+    </section>
+
+    <div class="workspace">
+      <section class="chat-panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Live pipeline</p>
+            <h2>Conversation</h2>
+          </div>
+          <span id="turn-label" class="pill">Turn 1 / 10</span>
+        </div>
+
+        <div id="messages" class="messages" aria-live="polite">
+          <div class="message assistant">
+            Tell me what you are shopping for. Try “I want black Nike boots under SGD 100.”
+          </div>
+        </div>
+
+        <form id="chat-form">
+          <label for="message-input">Customer message</label>
+          <div class="composer">
+            <input id="message-input" autocomplete="off" placeholder="Describe what you need…" required>
+            <button id="send-button" type="submit">Send</button>
+          </div>
+          <p id="status" class="status">Starting a session…</p>
+        </form>
+      </section>
+
+      <aside>
+        <section class="state-panel">
+          <p class="eyebrow">Member B state</p>
+          <h2>What the agent knows</h2>
+          <div id="state-view" class="empty">No preferences extracted yet.</div>
+        </section>
+
+        <section class="results-panel">
+          <p class="eyebrow">Member C output</p>
+          <h2>Top recommendations</h2>
+          <ol id="recommendations" class="recommendations">
+            <li class="empty">Send a message to rank products.</li>
+          </ol>
+        </section>
+      </aside>
+    </div>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
