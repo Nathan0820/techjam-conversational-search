@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from copy import deepcopy
 from pathlib import Path
+
+from dialogue.state import SessionState
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
@@ -38,7 +41,7 @@ class Agent:
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
         self.catalog_path = Path(catalog_path)
         self.connection = sqlite3.connect(":memory:")
-        self._sessions: set[str] = set()
+        self.sessions: dict[str, SessionState] = {}
         self._build_index()
 
     def _build_index(self) -> None:
@@ -72,7 +75,10 @@ class Agent:
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         # The profile is anonymized and may be used for personalization.
-        self._sessions.add(session_id)
+        self.sessions[session_id] = SessionState(
+            session_id=session_id,
+            user_profile=deepcopy(user_profile),
+        )
 
     def respond(
         self,
@@ -81,8 +87,11 @@ class Agent:
         turn: int,
         top_k: int,
     ) -> dict:
-        if session_id not in self._sessions:
+        if session_id not in self.sessions:
             raise RuntimeError("reset must be called before respond")
+        state = self.sessions[session_id]
+        state.turn = turn
+        state.message_history.append(user_message)
         unique_terms = list(dict.fromkeys(_terms(user_message)))[:40]
         expression = " OR ".join(f'"{term}"' for term in unique_terms)
         if not expression:
