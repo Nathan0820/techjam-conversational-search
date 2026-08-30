@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any
 
 
@@ -34,6 +34,8 @@ def flatten(value: object) -> list[str]:
             result.append(str(key))
             result.extend(flatten(item))
         return result
+    if is_dataclass(value) and not isinstance(value, type):
+        return flatten(asdict(value))
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         result = []
         for item in value:
@@ -105,8 +107,51 @@ def _number(value: object) -> float | None:
 def max_price(constraints: Mapping[str, Any]) -> float | None:
     for key in PRICE_KEYS:
         if key in constraints:
-            return _number(constraints[key])
+            value = constraints[key]
+            values = value if isinstance(value, Sequence) and not isinstance(value, (str, bytes)) else [value]
+            maxima = []
+            for item in values:
+                if is_dataclass(item) and not isinstance(item, type):
+                    item = asdict(item)
+                if isinstance(item, Mapping):
+                    maximum = _number(item.get("maximum"))
+                else:
+                    maximum = _number(item)
+                if maximum is not None:
+                    maxima.append(maximum)
+            if maxima:
+                return min(maxima)
     return None
+
+
+def _constraint_views(state: object) -> tuple[Mapping[str, Any], Mapping[str, Any], Mapping[str, Any]]:
+    """Return active, hard, and soft values for both supported state schemas.
+
+    Current ``SessionState`` keeps values in ``slots`` and strength labels in
+    sets. Older callers and tests may still provide value mappings directly in
+    ``hard_constraints`` and ``soft_preferences``.
+    """
+
+    slots = _mapping(state_value(state, "slots", {}))
+    raw_hard = state_value(state, "hard_constraints", {})
+    raw_soft = state_value(state, "soft_preferences", {})
+
+    if isinstance(raw_hard, Mapping):
+        hard = dict(raw_hard)
+    else:
+        hard = {name: slots.get(name, []) for name in raw_hard if name in slots}
+
+    if isinstance(raw_soft, Mapping):
+        soft = dict(raw_soft)
+    else:
+        soft = {name: slots.get(name, []) for name in raw_soft if name in slots}
+
+    active = dict(slots)
+    active.update(hard)
+    # Extracted but not-yet-classified slots remain useful ranking evidence.
+    for name, values in soft.items():
+        active.setdefault(name, values)
+    return active, hard, soft
 
 
 @dataclass
@@ -128,8 +173,7 @@ class ProductFeatures:
 
 
 def extract_features(product: Mapping[str, Any], state: object) -> ProductFeatures:
-    hard = _mapping(state_value(state, "hard_constraints", {}))
-    soft = state_value(state, "soft_preferences", {})
+    active, hard, soft = _constraint_views(state)
     negative = state_value(state, "negative_preferences", state_value(state, "excluded_preferences", {}))
     positive_terms, soft_negative = _preference_terms(soft)
     explicit_negative, disabled_negative = _preference_terms(negative)
@@ -137,12 +181,12 @@ def extract_features(product: Mapping[str, Any], state: object) -> ProductFeatur
     text = product_text(product)
 
     result = ProductFeatures(
-        category_match=_phrase_match(_constraint_values(hard, "category"), normalize_text([product.get("category"), product.get("categories"), product.get("title")])),
-        brand_match=_phrase_match(_constraint_values(hard, "brand"), normalize_text([product.get("brand"), product.get("store"), product.get("details"), product.get("title")])),
-        color_match=_phrase_match(_constraint_values(hard, "color"), text),
-        size_match=_phrase_match(_constraint_values(hard, "size"), text),
-        material_match=_phrase_match(_constraint_values(hard, "material"), text),
-        use_case_match=_phrase_match(_constraint_values(hard, "use_case"), text),
+        category_match=_phrase_match(_constraint_values(active, "category"), normalize_text([product.get("category"), product.get("categories"), product.get("title")])),
+        brand_match=_phrase_match(_constraint_values(active, "brand"), normalize_text([product.get("brand"), product.get("store"), product.get("details"), product.get("title")])),
+        color_match=_phrase_match(_constraint_values(active, "color"), text),
+        size_match=_phrase_match(_constraint_values(active, "size"), text),
+        material_match=_phrase_match(_constraint_values(active, "material"), text),
+        use_case_match=_phrase_match(_constraint_values(active, "use_case"), text),
         positive_preference_match=_phrase_match(positive_terms, text),
         negative_preference_match=_phrase_match(negative_terms, text),
         bm25_score=_number(product.get("bm25_score")),
@@ -151,16 +195,28 @@ def extract_features(product: Mapping[str, Any], state: object) -> ProductFeatur
         review_count=_number(product.get("rating_number", product.get("review_count"))),
     )
 
-    limit = max_price(hard)
+    # Budget values use the slot name in SessionState; legacy callers may use
+    # max_price. All active budgets affect scoring, while only explicitly hard
+    # budgets create a violation.
+    limit = max_price(active)
+    hard_limit = max_price(hard)
     price = _number(product.get("price"))
     if limit is not None and price is not None:
         result.price_match = 1.0 if price <= limit else 0.0
 
-    for name in ("category", "brand", "color", "size", "material", "use_case"):
-        match = getattr(result, f"{name}_match")
-        if match is not None and match == 0:
+    hard_match_text = {
+        "category": normalize_text([product.get("category"), product.get("categories"), product.get("title")]),
+        "brand": normalize_text([product.get("brand"), product.get("store"), product.get("details"), product.get("title")]),
+        "color": text,
+        "size": text,
+        "material": text,
+        "use_case": text,
+    }
+    for name, candidate_text in hard_match_text.items():
+        match = _phrase_match(_constraint_values(hard, name), candidate_text)
+        if match == 0:
             result.hard_violations.append(name)
-    if result.price_match == 0:
+    if hard_limit is not None and price is not None and price > hard_limit:
         result.hard_violations.append("max_price")
     return result
 

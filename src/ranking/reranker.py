@@ -14,11 +14,13 @@ class CrossEncoder(Protocol):
 
 @dataclass(frozen=True)
 class RankingWeights:
-    constraint: float = 0.35
-    semantic: float = 0.25
-    keyword: float = 0.20
-    category: float = 0.10
-    quality: float = 0.10
+    # Retrieval remains the strongest signal. Structured state refines its
+    # ordering without allowing a noisy extracted match to overwhelm BM25.
+    constraint: float = 0.24
+    semantic: float = 0.0
+    keyword: float = 0.70
+    category: float = 0.06
+    quality: float = 0.001
     feature_blend: float = 0.60
     cross_encoder_blend: float = 0.40
 
@@ -94,11 +96,6 @@ class Reranker:
                 + self.weights.quality * quality
             )
 
-            # Exact-match protection is deliberately separate from normalized retrieval scores.
-            bonus = 0.0
-            bonus += 2.0 if item.brand_match == 1.0 else 0.0
-            bonus += 2.0 if item.category_match == 1.0 else 0.0
-            bonus += 1.5 if item.price_match == 1.0 else 0.0
             penalty = 0.0
             penalty += 8.0 if "max_price" in item.hard_violations else 0.0
             penalty += 8.0 if "category" in item.hard_violations else 0.0
@@ -109,7 +106,7 @@ class Reranker:
             if scenario == "buying":
                 penalty *= 1.15
 
-            feature_score = base + bonus - penalty
+            feature_score = base - penalty
             scored.append({
                 "product": product,
                 "feature_score": feature_score,

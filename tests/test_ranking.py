@@ -3,6 +3,10 @@ from __future__ import annotations
 import unittest
 from dataclasses import dataclass
 
+from dialogue.accumulator import accumulate_information
+from dialogue.slot_extractor import extract_slots
+from dialogue.state import SessionState
+from dialogue.types import BudgetConstraint
 from src.ranking.features import extract_features, state_to_query
 from src.ranking.diagnostics import ranking_failure_record
 from src.ranking.reranker import Reranker, rerank, to_evaluator_recommendations
@@ -109,6 +113,40 @@ class RankingTest(unittest.TestCase):
 
         features = extract_features(product("A", "Black Nike boot", store="Nike"), State({"brand": "Nike"}, {}))
         self.assertEqual(features.brand_match, 1.0)
+
+    def test_accumulated_session_slots_affect_ranking_before_classification(self) -> None:
+        state = SessionState(session_id="session")
+        accumulate_information(state, extract_slots("black Nike boots"))
+        candidates = [
+            product("wrong", "Brown Adidas sandals", store="Adidas", categories=["Sandals"]),
+            product("target", "Black Nike boots", store="Nike", categories=["Boots"]),
+        ]
+
+        ranked = rerank(candidates, state)
+
+        self.assertEqual(ranked[0]["product"]["parent_asin"], "target")
+        self.assertEqual(ranked[0]["features"]["brand_match"], 1.0)
+        self.assertEqual(ranked[0]["features"]["color_match"], 1.0)
+        self.assertEqual(ranked[1]["features"]["hard_violations"], [])
+
+    def test_session_state_hard_constraints_use_values_from_slots(self) -> None:
+        state = SessionState(session_id="session", intent="buying")
+        state.set_constraint("category", ["boots"], strength="hard")
+        state.set_constraint("budget", [
+            BudgetConstraint(minimum=50, maximum=100, currency="SGD")
+        ], strength="hard")
+        candidates = [
+            product("wrong-category", "Running shoes", categories=["Shoes"], price=80),
+            product("over-budget", "Premium boots", categories=["Boots"], price=150),
+            product("target", "Everyday boots", categories=["Boots"], price=90),
+        ]
+
+        ranked = rerank(candidates, state)
+
+        self.assertEqual(ranked[0]["product"]["parent_asin"], "target")
+        by_asin = {item["product"]["parent_asin"]: item for item in ranked}
+        self.assertIn("category", by_asin["wrong-category"]["features"]["hard_violations"])
+        self.assertIn("max_price", by_asin["over-budget"]["features"]["hard_violations"])
 
     def test_ranking_failure_record(self) -> None:
         retrieved = [product("target", "Boot"), product("other", "Boot")]

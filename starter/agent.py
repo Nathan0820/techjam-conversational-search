@@ -12,6 +12,7 @@ from dialogue.accumulator import accumulate_information
 from dialogue.intent_detector import detect_intent
 from dialogue.slot_extractor import extract_slots
 from dialogue.state import SessionState
+from src.ranking.reranker import Reranker, to_evaluator_recommendations
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
@@ -71,6 +72,8 @@ class Agent:
         self.catalog_path = Path(catalog_path)
         self.connection = sqlite3.connect(":memory:")
         self.sessions: dict[str, SessionState] = {}
+        self.catalog_by_asin: dict[str, dict] = {}
+        self.reranker = Reranker()
         self._build_index()
 
     def _build_index(self) -> None:
@@ -86,9 +89,11 @@ class Agent:
         with self.catalog_path.open(encoding="utf-8") as handle:
             for line in handle:
                 product = json.loads(line)
+                parent_asin = str(product["parent_asin"])
+                self.catalog_by_asin[parent_asin] = product
                 batch.append(
                     (
-                        str(product["parent_asin"]),
+                        parent_asin,
                         _text(product.get("title")),
                         _text(product.get("categories")),
                         _text(product.get("features")),
@@ -131,6 +136,24 @@ class Agent:
         ).fetchall()
         return [(str(row[0]), float(row[1])) for row in rows]
 
+    def ranking_candidates(
+        self,
+        retrieved: list[tuple[str, float]],
+    ) -> list[dict]:
+        """Hydrate retrieval IDs with catalog metadata for downstream ranking."""
+
+        candidates = []
+        for parent_asin, score in retrieved:
+            product = self.catalog_by_asin.get(parent_asin)
+            if product is None:
+                continue
+            candidates.append({
+                **product,
+                "parent_asin": parent_asin,
+                "bm25_score": score,
+            })
+        return candidates
+
     def respond(
         self,
         session_id: str,
@@ -145,6 +168,9 @@ class Agent:
         state = self.sessions[session_id]
         extraction = extract_slots(user_message)
         detected_intent = detect_intent(user_message, state, extraction)
+        ranking_state = deepcopy(state)
+        accumulate_information(ranking_state, extraction)
+        ranking_state.intent = detected_intent
         # Step 7 - build the query from every customer turn so far, including this one,
         # so constraints revealed earlier in the session still influence retrieval.
         # Nothing is written to state yet: if retrieval raises, the turn must leave the
@@ -153,10 +179,12 @@ class Agent:
             entry["content"] for entry in state.message_history if entry["role"] == "user"
         ]
         query = " ".join([*prior_messages, user_message])
-        # Step 8 - retrieve. Reranking (role C) will eventually take a deeper pool from
-        # retrieve() and choose the final top_k; for now the pool is the answer.
-        candidates = self.retrieve(query, n=top_k)
-        recommendations = [{"parent_asin": parent_asin} for parent_asin, _ in candidates]
+        # Step 8 - retrieve a recall-oriented pool, hydrate its catalog metadata,
+        # and let ranking choose the final evaluator-facing top_k.
+        retrieved = self.retrieve(query)
+        candidates = self.ranking_candidates(retrieved)
+        ranked = self.reranker.rerank(candidates, ranking_state, top_k=top_k)
+        recommendations = to_evaluator_recommendations(ranked)
         response = {
             "message": "Here are the closest matches I found.",
             "ask_attribute": STUB_ASK_CYCLE[(turn - 1) % len(STUB_ASK_CYCLE)],
