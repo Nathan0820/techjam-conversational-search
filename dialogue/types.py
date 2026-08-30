@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 
 Number: TypeAlias = int | float
@@ -18,3 +18,4 @@ class BudgetConstraint:
 
 
 SlotValue: TypeAlias = str | BudgetConstraint
+ShoppingIntent: TypeAlias = Literal["buying", "browsing"]
