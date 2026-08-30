@@ -30,9 +30,10 @@ class SessionState:
     ``user_profile`` is historical preference context supplied at reset time,
     while ``message_history`` records the complete structured user and assistant
     conversation in chronological order.
-    ``revealed_text`` preserves exact retrieval-useful wording identified later;
-    its strings must not be normalized or rewritten in place. ``slots`` is the
-    authoritative store for current constraint values. The hard and soft sets
+    ``revealed_text`` preserves every exact retrieval-useful phrase historically,
+    while ``active_revealed_text`` contains only phrases still operationally
+    valid. Neither list rewrites phrase content. ``slots`` is the authoritative
+    store for normalized current constraint values. The hard and soft sets
     contain slot names only, classifying how values in ``slots`` should be used.
 
     The operational fields ``slots``, ``hard_constraints``, and
@@ -54,6 +55,7 @@ class SessionState:
     override_detected: bool = False
     message_history: list[dict[str, str]] = field(default_factory=list)
     revealed_text: list[str] = field(default_factory=list)
+    active_revealed_text: list[str] = field(default_factory=list)
 
     def set_constraint(
         self,
@@ -90,6 +92,19 @@ class SessionState:
         for value in values:
             if value not in current_values:
                 current_values.append(value)
+
+    def remove_slot_values(self, slot_name: str, values: Iterable[SlotValue]) -> None:
+        """Remove targeted values and clear strength labels if none remain."""
+
+        self._validate_slot_name(slot_name)
+        removed_values = tuple(values)
+        self.slots[slot_name] = [
+            value for value in self.slots[slot_name]
+            if value not in removed_values
+        ]
+        if not self.slots[slot_name]:
+            self.hard_constraints.discard(slot_name)
+            self.soft_preferences.discard(slot_name)
 
     def clear_constraint(self, slot_name: str) -> None:
         """Clear a slot's values and remove all strength classification."""

@@ -48,6 +48,7 @@ class SessionStateTest(unittest.TestCase):
         self.assertFalse(state.override_detected)
         self.assertEqual(state.message_history, [])
         self.assertEqual(state.revealed_text, [])
+        self.assertEqual(state.active_revealed_text, [])
 
         field_names = {item.name for item in fields(SessionState)}
         evaluator_only = {
@@ -66,6 +67,7 @@ class SessionStateTest(unittest.TestCase):
         first.asked_attributes.add("size")
         first.message_history.append({"role": "user", "content": "hello"})
         first.revealed_text.append("color: blue")
+        first.active_revealed_text.append("color: blue")
 
         self.assertEqual(second.slots["color"], [])
         self.assertIsNot(first.slots["color"], second.slots["color"])
@@ -74,6 +76,7 @@ class SessionStateTest(unittest.TestCase):
         self.assertEqual(second.asked_attributes, set())
         self.assertEqual(second.message_history, [])
         self.assertEqual(second.revealed_text, [])
+        self.assertEqual(second.active_revealed_text, [])
 
     def test_set_constraint_rejects_unsupported_slot_and_strength(self) -> None:
         state = SessionState(session_id="one")
@@ -152,6 +155,7 @@ class AgentSessionLifecycleTest(unittest.TestCase):
         self.assertEqual(state.asked_attributes, set())
         self.assertEqual(state.message_history, [])
         self.assertEqual(state.revealed_text, [])
+        self.assertEqual(state.active_revealed_text, [])
 
     def test_respond_appends_messages_in_order_and_updates_turn(self) -> None:
         self.agent.reset("session", {})
@@ -167,6 +171,7 @@ class AgentSessionLifecycleTest(unittest.TestCase):
             {"role": "assistant", "content": second_response["message"]},
         ])
         self.assertEqual(state.revealed_text, [])
+        self.assertEqual(state.active_revealed_text, [])
         self.assertEqual(state.turn, 2)
         self.assertIn("recommendations", first_response)
         self.assertIn("recommendations", second_response)
@@ -183,6 +188,7 @@ class AgentSessionLifecycleTest(unittest.TestCase):
         self.assertEqual(state.message_history, [])
         self.assertTrue(all(not values for values in state.slots.values()))
         self.assertEqual(state.revealed_text, [])
+        self.assertEqual(state.active_revealed_text, [])
 
     def test_successful_respond_accumulates_extracted_information(self) -> None:
         self.agent.reset("session", {})
@@ -198,6 +204,7 @@ class AgentSessionLifecycleTest(unittest.TestCase):
         self.assertEqual(state.slots["color"], ["black"])
         self.assertEqual(state.slots["material"], ["cotton"])
         self.assertEqual(state.revealed_text[0], "black cotton under $30")
+        self.assertEqual(state.active_revealed_text[0], "black cotton under $30")
 
     def test_resetting_same_session_clears_previous_state(self) -> None:
         self.agent.reset("session", {"summary": "old"})
@@ -208,6 +215,7 @@ class AgentSessionLifecycleTest(unittest.TestCase):
         old_state.last_ask_yielded = True
         old_state.override_detected = True
         old_state.revealed_text.append("blue")
+        old_state.active_revealed_text.append("blue")
         self.agent.respond("session", "old message", 4, 10)
 
         self.agent.reset("session", {"summary": "new"})
@@ -224,6 +232,7 @@ class AgentSessionLifecycleTest(unittest.TestCase):
         self.assertFalse(new_state.override_detected)
         self.assertEqual(new_state.message_history, [])
         self.assertEqual(new_state.revealed_text, [])
+        self.assertEqual(new_state.active_revealed_text, [])
         self.assertEqual(new_state.turn, 0)
 
     def test_sessions_do_not_share_mutable_state(self) -> None:

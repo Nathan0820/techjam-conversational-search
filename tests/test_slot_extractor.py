@@ -107,6 +107,43 @@ class SlotExtractorTest(unittest.TestCase):
             ],
         )
 
+    def test_catalog_like_raw_phrases_are_preserved_verbatim(self) -> None:
+        """Keep useful descriptive wording beyond its normalized fragments."""
+
+        for phrase in (
+            "Stainless Steel Band",
+            "Long torso camisole for extra coverage with spagetti adjustable strap",
+        ):
+            with self.subTest(phrase=phrase):
+                result = extract_slots(phrase)
+                self.assertIn(phrase, result.revealed_text)
+                self.assertFalse(any(
+                    value == phrase
+                    for values in result.slots.values()
+                    for value in values
+                ))
+
+    def test_initial_preference_preserves_long_catalog_text(self) -> None:
+        """Capture the trailing initial preference as one exact raw phrase."""
+
+        phrase = (
+            "Long torso camisole for extra coverage with spagetti adjustable "
+            "strap for perfect fit"
+        )
+        result = extract_slots(f"I'm looking for Camisoles. {phrase}")
+        self.assertIn(phrase, result.revealed_text)
+
+    def test_filler_and_override_scaffolding_are_not_raw_constraints(self) -> None:
+        """Exclude dialogue-only language while retaining a replacement value."""
+
+        for message in ("thanks", "what do you have", "okay", "actually"):
+            with self.subTest(message=message):
+                self.assertEqual(extract_slots(message).revealed_text, [])
+        result = extract_slots(
+            "Actually, ignore my earlier preference. What I need is: leather."
+        )
+        self.assertEqual(result.revealed_text, ["leather"])
+
     def test_duplicate_mentions_do_not_duplicate_values(self) -> None:
         result = extract_slots("Black, black, and BLACK cotton cotton.")
         self.assertEqual(result.slots["color"], ["black"])
