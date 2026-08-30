@@ -5,25 +5,9 @@ import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import TypeAlias
 
 from .state import SUPPORTED_SLOTS
-
-
-Number: TypeAlias = int | float
-
-
-@dataclass(frozen=True)
-class BudgetConstraint:
-    """A monetary bound extracted without performing currency conversion."""
-
-    minimum: Number | None = None
-    maximum: Number | None = None
-    currency: str | None = None
-    approximate: bool = False
-
-
-SlotValue: TypeAlias = str | BudgetConstraint
+from .types import BudgetConstraint, Number, SlotValue
 
 
 def _empty_extracted_slots() -> dict[str, list[SlotValue]]:
@@ -105,7 +89,7 @@ def _ngrams(message: str, maximum: int = 5) -> list[tuple[str, str]]:
         for start in range(len(tokens) - length + 1):
             end = start + length - 1
             raw = message[tokens[start].start():tokens[end].end()]
-            result.append((raw.casefold(), raw))
+            result.append((raw.rstrip(".,!?;:").casefold(), raw))
     return result
 
 

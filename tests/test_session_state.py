@@ -181,6 +181,23 @@ class AgentSessionLifecycleTest(unittest.TestCase):
 
         self.assertEqual(state.turn, 0)
         self.assertEqual(state.message_history, [])
+        self.assertTrue(all(not values for values in state.slots.values()))
+        self.assertEqual(state.revealed_text, [])
+
+    def test_successful_respond_accumulates_extracted_information(self) -> None:
+        self.agent.reset("session", {})
+
+        self.agent.respond(
+            "session",
+            "A key requirement is: black cotton under $30.",
+            1,
+            10,
+        )
+
+        state = self.agent.sessions["session"]
+        self.assertEqual(state.slots["color"], ["black"])
+        self.assertEqual(state.slots["material"], ["cotton"])
+        self.assertEqual(state.revealed_text[0], "black cotton under $30")
 
     def test_resetting_same_session_clears_previous_state(self) -> None:
         self.agent.reset("session", {"summary": "old"})

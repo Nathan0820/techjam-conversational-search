@@ -6,6 +6,8 @@ import sqlite3
 from copy import deepcopy
 from pathlib import Path
 
+from dialogue.accumulator import accumulate_information
+from dialogue.slot_extractor import extract_slots
 from dialogue.state import SessionState
 
 
@@ -90,6 +92,7 @@ class Agent:
         if session_id not in self.sessions:
             raise RuntimeError("reset must be called before respond")
         state = self.sessions[session_id]
+        extraction = extract_slots(user_message)
         unique_terms = list(dict.fromkeys(_terms(user_message)))[:40]
         expression = " OR ".join(f'"{term}"' for term in unique_terms)
         if not expression:
@@ -112,4 +115,5 @@ class Agent:
             {"role": "user", "content": user_message},
             {"role": "assistant", "content": response["message"]},
         ])
+        accumulate_information(state, extraction)
         return response
