@@ -10,6 +10,7 @@ from pathlib import Path
 
 from dialogue.accumulator import accumulate_information
 from dialogue.intent_detector import detect_intent
+from dialogue.override_handler import apply_override, resolve_override
 from dialogue.slot_extractor import extract_slots
 from dialogue.state import SessionState
 
@@ -109,6 +110,7 @@ class Agent:
         state = self.sessions[session_id]
         extraction = extract_slots(user_message)
         detected_intent = detect_intent(user_message, state, extraction)
+        override_resolution = resolve_override(user_message, state, extraction)
         unique_terms = list(dict.fromkeys(_terms(user_message)))[:40]
         expression = " OR ".join(f'"{term}"' for term in unique_terms)
         if not expression:
@@ -132,5 +134,6 @@ class Agent:
             {"role": "assistant", "content": response["message"]},
         ])
         accumulate_information(state, extraction)
+        apply_override(state, override_resolution)
         state.intent = detected_intent
         return response

@@ -91,6 +91,19 @@ class SessionState:
             if value not in current_values:
                 current_values.append(value)
 
+    def remove_slot_values(self, slot_name: str, values: Iterable[SlotValue]) -> None:
+        """Remove targeted values and clear strength labels if none remain."""
+
+        self._validate_slot_name(slot_name)
+        removed_values = tuple(values)
+        self.slots[slot_name] = [
+            value for value in self.slots[slot_name]
+            if value not in removed_values
+        ]
+        if not self.slots[slot_name]:
+            self.hard_constraints.discard(slot_name)
+            self.soft_preferences.discard(slot_name)
+
     def clear_constraint(self, slot_name: str) -> None:
         """Clear a slot's values and remove all strength classification."""
 
