@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from copy import deepcopy
 from pathlib import Path
+
+from dialogue.accumulator import accumulate_information
+from dialogue.slot_extractor import extract_slots
+from dialogue.state import SessionState
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
@@ -56,8 +61,7 @@ class Agent:
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
         self.catalog_path = Path(catalog_path)
         self.connection = sqlite3.connect(":memory:")
-        # session_id -> every customer message seen so far, oldest first.
-        self._sessions: dict[str, list[str]] = {}
+        self.sessions: dict[str, SessionState] = {}
         self._build_index()
 
     def _build_index(self) -> None:
@@ -91,7 +95,10 @@ class Agent:
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         # The profile is anonymized and may be used for personalization.
-        self._sessions[session_id] = []
+        self.sessions[session_id] = SessionState(
+            session_id=session_id,
+            user_profile=deepcopy(user_profile),
+        )
 
     def retrieve(self, query: str, n: int = DEFAULT_CANDIDATES) -> list[tuple[str, float]]:
         """Return up to `n` (parent_asin, score) candidates for `query`, best first.
@@ -118,20 +125,32 @@ class Agent:
         turn: int,
         top_k: int,
     ) -> dict:
-        if session_id not in self._sessions:
+        if session_id not in self.sessions:
             raise RuntimeError("reset must be called before respond")
-        history = self._sessions[session_id]
-        history.append(user_message)
-        # Step 7 - build the query from every turn so far, not just the newest message,
+        state = self.sessions[session_id]
+        extraction = extract_slots(user_message)
+        # Step 7 - build the query from every customer turn so far, including this one,
         # so constraints revealed earlier in the session still influence retrieval.
-        query = " ".join(history)
+        # Nothing is written to state yet: if retrieval raises, the turn must leave the
+        # session untouched. Switching this to state.revealed_text is a separate change.
+        prior_messages = [
+            entry["content"] for entry in state.message_history if entry["role"] == "user"
+        ]
+        query = " ".join([*prior_messages, user_message])
         # Step 8 - retrieve. Reranking (role C) will eventually take a deeper pool from
         # retrieve() and choose the final top_k; for now the pool is the answer.
         candidates = self.retrieve(query, n=top_k)
         recommendations = [{"parent_asin": parent_asin} for parent_asin, _ in candidates]
-        return {
+        response = {
             "message": "Here are the closest matches I found.",
             "ask_attribute": STUB_ASK_CYCLE[(turn - 1) % len(STUB_ASK_CYCLE)],
             "recommendations": recommendations,
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
+        state.turn = turn
+        state.message_history.extend([
+            {"role": "user", "content": user_message},
+            {"role": "assistant", "content": response["message"]},
+        ])
+        accumulate_information(state, extraction)
+        return response
