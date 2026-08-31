@@ -33,7 +33,6 @@ class RankingWeights:
 
 _PRICE_VIOLATIONS = {"min_price", "max_price"}
 _CONFIRMED_VIOLATIONS = {"category", *_PRICE_VIOLATIONS}
-_PRICE_CONSTRAINT_NAMES = {"budget", "price", "max_price", "price_max", "min_price"}
 
 
 def _minmax(values: list[float | None], *, log_scale: bool = False) -> list[float]:
@@ -70,22 +69,6 @@ def _constraint_score(features: ProductFeatures) -> float:
         features.price_match,
         features.positive_preference_match,
     ])
-
-
-def _has_hard_budget(state: object) -> bool:
-    raw = state_value(state, "hard_constraints", {})
-    names = set(raw) if isinstance(raw, Mapping) else set(raw or ())
-    return bool(names & _PRICE_CONSTRAINT_NAMES)
-
-
-def _price_compliance_tier(features: ProductFeatures, hard_budget: bool) -> int:
-    """Order confirmed budget matches, unknown prices, then violations."""
-
-    if not hard_budget:
-        return 0
-    if _PRICE_VIOLATIONS & set(features.hard_violations):
-        return 2
-    return 0 if features.price_match == 1.0 else 1
 
 
 def _confident_bm25_leader(
@@ -127,7 +110,6 @@ class Reranker:
         dense = _minmax([item.dense_score for item in features])
         ratings = [min(1.0, max(0.0, (item.rating or 0.0) / 5.0)) for item in features]
         reviews = _minmax([item.review_count for item in features], log_scale=True)
-        hard_budget = _has_hard_budget(state)
         protected_index = _confident_bm25_leader(
             features,
             self.weights.bm25_confidence_gap,
@@ -162,7 +144,6 @@ class Reranker:
                 penalty *= self.weights.buying_penalty_multiplier
 
             feature_score = base - penalty
-            price_tier = _price_compliance_tier(item, hard_budget)
             scored.append({
                 "product": product,
                 "base_score": base,
@@ -170,7 +151,6 @@ class Reranker:
                 "final_score": feature_score,
                 "_features": item,
                 "_penalty": penalty,
-                "_price_tier": price_tier,
                 "_bm25_protected": (
                     index == protected_index
                     and not (_CONFIRMED_VIOLATIONS & set(item.hard_violations))
@@ -179,7 +159,6 @@ class Reranker:
             })
 
         scored.sort(key=lambda item: (
-            item["_price_tier"],
             -int(item["_bm25_protected"]),
             -item["feature_score"],
             item["_input_index"],
@@ -201,7 +180,6 @@ class Reranker:
                     - item["_penalty"]
                 )
             shortlist.sort(key=lambda item: (
-                item["_price_tier"],
                 -int(item["_bm25_protected"]),
                 -item["final_score"],
                 item["_input_index"],
@@ -212,7 +190,6 @@ class Reranker:
             item.pop("base_score", None)
             item.pop("_input_index", None)
             item.pop("_penalty", None)
-            item.pop("_price_tier", None)
             item.pop("_bm25_protected", None)
         return shortlist[:top_k]
 

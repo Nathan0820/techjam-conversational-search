@@ -104,7 +104,9 @@ class RankingTest(unittest.TestCase):
             ),
         ]
 
-        ranked = rerank(candidates, state)
+        ranked = Reranker(
+            weights=RankingWeights(price_violation=1.0),
+        ).rerank(candidates, state)
 
         self.assertEqual(ranked[0]["product"]["parent_asin"], "compliant")
 
@@ -132,30 +134,6 @@ class RankingTest(unittest.TestCase):
         ).rerank(candidates, state)
 
         self.assertEqual(ranked[0]["product"]["parent_asin"], "compliant")
-
-    def test_budget_compliance_tiers_precede_numeric_score(self) -> None:
-        """Order known budget matches, unknown prices, then violations."""
-
-        weights = RankingWeights(
-            constraint=0.0,
-            keyword=1.0,
-            category=0.0,
-            quality=0.0,
-            price_violation=0.0,
-        )
-        state = {"hard_constraints": {"max_price": 100}}
-        candidates = [
-            product("violating", "Watch", price=150, bm25_score=10),
-            product("unknown", "Watch", price=None, bm25_score=9),
-            product("compliant", "Watch", price=80, bm25_score=1),
-        ]
-
-        ranked = Reranker(weights=weights).rerank(candidates, state, top_k=3)
-
-        self.assertEqual(
-            [item["product"]["parent_asin"] for item in ranked],
-            ["compliant", "unknown", "violating"],
-        )
 
     def test_close_bm25_scores_allow_feature_reranking(self) -> None:
         """Do not protect a retrieval leader when its score margin is small."""
