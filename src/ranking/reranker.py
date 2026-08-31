@@ -29,6 +29,7 @@ class CrossEncoder(Protocol):
 
     def predict(self, pairs: Sequence[tuple[str, str]]) -> Sequence[float]:
         """Return one score per pair, in the order the pairs were given."""
+        ...
 
 
 @dataclass(frozen=True)
