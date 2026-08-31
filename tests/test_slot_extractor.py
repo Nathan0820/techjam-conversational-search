@@ -39,6 +39,25 @@ class SlotExtractorTest(unittest.TestCase):
         self.assertIn("Columbia", result.slots["brand"])
         self.assertIn("T-Shirts", result.slots["category"])
 
+    def test_brand_extraction_requires_legitimate_local_context(self) -> None:
+        """Reject care/closure tokens while retaining explicit brand contexts."""
+
+        for phrase in ("Hand Wash Only", "Pull On closure"):
+            with self.subTest(phrase=phrase):
+                result = extract_slots(phrase)
+                self.assertEqual(result.slots["brand"], [])
+                self.assertEqual(result.slots["category"], [])
+                self.assertIn(phrase, result.revealed_text)
+
+        for message in (
+            "from Nike",
+            "Nike shoes",
+            "brand Nike",
+            "I need a Columbia T-Shirts option.",
+        ):
+            with self.subTest(message=message):
+                self.assertTrue(extract_slots(message).slots["brand"])
+
     def test_detects_catalog_category_before_terminal_punctuation(self) -> None:
         result = extract_slots("I am looking for Boots.")
 
@@ -123,6 +142,18 @@ class SlotExtractorTest(unittest.TestCase):
                     for value in values
                 ))
 
+    def test_component_noun_is_not_promoted_to_category(self) -> None:
+        """Keep a strap component as raw/feature evidence, not product type."""
+
+        phrase = (
+            "Long torso camisole for extra coverage with spagetti adjustable strap"
+        )
+        result = extract_slots(phrase)
+
+        self.assertNotIn("Straps", result.slots["category"])
+        self.assertIn(phrase, result.revealed_text)
+        self.assertIn("adjustable", result.slots["feature"])
+
     def test_initial_preference_preserves_long_catalog_text(self) -> None:
         """Capture the trailing initial preference as one exact raw phrase."""
 
@@ -143,6 +174,48 @@ class SlotExtractorTest(unittest.TestCase):
             "Actually, ignore my earlier preference. What I need is: leather."
         )
         self.assertEqual(result.revealed_text, ["leather"])
+
+    def test_conversational_followups_are_not_raw_constraints(self) -> None:
+        """Exclude acknowledgements even when they mention attribute words."""
+
+        for message in (
+            "Thanks, the fit advice helped.",
+            "That helped with the size advice.",
+            "Good advice about the wash instructions.",
+            "Sounds good for fit.",
+        ):
+            with self.subTest(message=message):
+                self.assertEqual(extract_slots(message).revealed_text, [])
+
+        for requirement in (
+            "I want a relaxed fit",
+            "Slim fit",
+            "It needs a loose fit",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertTrue(extract_slots(requirement).revealed_text)
+
+    def test_dimension_phrases_are_not_approximate_budgets(self) -> None:
+        """Require monetary context before constructing approximate budgets."""
+
+        for message in (
+            "Shaft measures approximately 8.37 inches",
+            "around 10 cm",
+            "roughly 5 feet",
+            "size around 8.5",
+        ):
+            with self.subTest(message=message):
+                self.assertEqual(extract_slots(message).slots["budget"], [])
+
+        monetary = {
+            "around $100": BudgetConstraint(100, 100, "$", approximate=True),
+            "approximately SGD 80": BudgetConstraint(80, 80, "SGD", approximate=True),
+            "budget around 50 dollars": BudgetConstraint(50, 50, approximate=True),
+            "roughly $120": BudgetConstraint(120, 120, "$", approximate=True),
+        }
+        for message, expected in monetary.items():
+            with self.subTest(message=message):
+                self.assertEqual(extract_slots(message).slots["budget"], [expected])
 
     def test_duplicate_mentions_do_not_duplicate_values(self) -> None:
         result = extract_slots("Black, black, and BLACK cotton cotton.")

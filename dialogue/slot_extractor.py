@@ -74,6 +74,20 @@ FILLER_RE = re.compile(
     r"show\s+me\s+(?:some\s+)?options?|anything\s+else)\s*[.!?]*\s*$",
     re.IGNORECASE,
 )
+CONVERSATIONAL_FOLLOWUP_RE = re.compile(
+    r"^\s*(?:thanks?\b|thank\s+you\b)|"
+    r"\b(?:that\s+helped|good\s+advice|sounds\s+good)\b",
+    re.IGNORECASE,
+)
+SHOPPING_TARGET_RE = re.compile(
+    r"\b(?:looking\s+for|shopping\s+for|need|want|find|show\s+me|"
+    r"prefer|interested\s+in|considering)\b",
+    re.IGNORECASE,
+)
+COMPONENT_RELATION_RE = re.compile(
+    r"\b(?:with|featuring|including|includes?|has|comes\s+with)\b",
+    re.IGNORECASE,
+)
 PRODUCT_ATTRIBUTE_RE = re.compile(
     r"\b(?:band|bracelet|button|closure|collar|comfort|coverage|cuff|department|"
     r"fit|heel|length|lined|lining|midsole|neck|pocket|rise|size|sleeve|sole|"
@@ -161,7 +175,11 @@ def _looks_like_product_description(phrase: str) -> bool:
     """Conservatively recognize a standalone catalog-like descriptive phrase."""
 
     words = TOKEN_RE.findall(phrase)
-    if not 2 <= len(words) <= 60 or FILLER_RE.fullmatch(phrase):
+    if (
+        not 2 <= len(words) <= 60
+        or FILLER_RE.fullmatch(phrase)
+        or CONVERSATIONAL_FOLLOWUP_RE.search(phrase)
+    ):
         return False
     return bool(PRODUCT_ATTRIBUTE_RE.search(phrase) or _has_known_product_term(phrase))
 
@@ -239,6 +257,16 @@ def _extract_budget(message: str, result: SlotExtraction) -> None:
         if not match:
             continue
         raw = match.group(0)
+        if kind == "approx":
+            context = message[
+                max(0, match.start() - 24):min(len(message), match.end() + 24)
+            ]
+            if not re.search(
+                r"(?:\$|\b(?:SGD|USD|dollars?|bucks?|budget|price|cost)\b)",
+                context,
+                re.IGNORECASE,
+            ):
+                continue
         if kind == "range":
             budget = BudgetConstraint(_number(match.group(1)), _number(match.group(2)), _currency(raw))
         elif kind == "max":
@@ -265,6 +293,71 @@ def _extract_sizes(message: str, result: SlotExtraction) -> None:
             _add_raw(result, match.group(0))
 
 
+def _local_clause(message: str, start: int, end: int) -> str:
+    """Return the sentence-like fragment containing one catalog match."""
+
+    left_boundaries = [message.rfind(mark, 0, start) for mark in ".!?;"]
+    left = max(left_boundaries) + 1
+    right_candidates = [
+        position
+        for mark in ".!?;"
+        if (position := message.find(mark, end)) >= 0
+    ]
+    right = min(right_candidates) if right_candidates else len(message)
+    return message[left:right].strip()
+
+
+def _brand_has_context(
+    message: str,
+    raw: str,
+    start: int,
+    end: int,
+    categories: dict[str, str],
+) -> bool:
+    """Require a local shopping or explicit-brand context for catalog brands."""
+
+    stripped = message.strip().rstrip(".,!?;:")
+    if stripped.casefold() == raw.casefold():
+        return True
+    clause = _local_clause(message, start, end)
+    escaped = re.escape(raw)
+    if re.search(
+        rf"(?i)(?<!\w)(?:brand|from|by|made\s+by)\s*:?[\s-]*{escaped}(?!\w)",
+        clause,
+    ):
+        return True
+    if re.search(
+        rf"(?i)(?:\b(?:must|has\s+to|needs?\s+to)\s+be\s+{escaped}(?!\w)|"
+        rf"(?<!\w){escaped}\s+(?:must\s+be\s+included|"
+        rf"is\s+(?:(?:not|no\s+longer)\s+)?(?:required|essential|necessary)|"
+        rf"isn't\s+(?:required|essential|necessary)))",
+        clause,
+    ):
+        return True
+    if SHOPPING_TARGET_RE.search(clause):
+        return True
+    return any(
+        folded in categories and folded not in GENERIC_CATEGORIES
+        for folded, _ in _ngrams(clause)
+    )
+
+
+def _category_has_context(message: str, start: int, end: int) -> bool:
+    """Reject component nouns promoted from long descriptive feature text."""
+
+    clause = _local_clause(message, start, end)
+    if SHOPPING_TARGET_RE.search(clause):
+        return True
+    relative_start = clause.casefold().find(message[start:end].casefold())
+    before_match = clause[:max(0, relative_start)]
+    if COMPONENT_RELATION_RE.search(before_match):
+        return False
+    return not (
+        len(TOKEN_RE.findall(clause)) > 8
+        and PRODUCT_ATTRIBUTE_RE.search(clause)
+    )
+
+
 def _extract_catalog_terms(message: str, result: SlotExtraction) -> None:
     brands, categories = _catalog_vocabulary()
     occupied: list[tuple[int, int]] = []
@@ -274,7 +367,11 @@ def _extract_catalog_terms(message: str, result: SlotExtraction) -> None:
         if start < 0 or any(start < end and span[1] > begin for begin, end in occupied):
             continue
         looks_named = " " in raw or any(character.isupper() for character in raw)
-        if folded in brands and looks_named:
+        if (
+            folded in brands
+            and looks_named
+            and _brand_has_context(message, raw, start, span[1], categories)
+        ):
             _add_value(result.slots["brand"], brands[folded])
             _add_raw(result, raw)
             occupied.append(span)
@@ -288,6 +385,7 @@ def _extract_catalog_terms(message: str, result: SlotExtraction) -> None:
                     raw,
                 )
             )
+            and _category_has_context(message, start, span[1])
             and not any(
                 folded == str(value).casefold()
                 for slot in ("material", "color", "style", "feature", "use_case")

@@ -9,6 +9,13 @@ from copy import deepcopy
 from pathlib import Path
 
 from dialogue.accumulator import accumulate_information
+from dialogue.clarification_policy import (
+    apply_clarification_decision,
+    clarification_message,
+    decide_clarification,
+    evaluate_previous_ask_yield,
+    select_response_ask_attribute,
+)
 from dialogue.constraint_classifier import (
     apply_constraint_classification,
     classify_constraints,
@@ -50,11 +57,6 @@ def _terms(text: str) -> list[str]:
         if len(token) > 1 and token.lower() not in STOPWORDS
     ]
 
-
-# STUB (owned by role B, replace with the real ask policy). Cycling through a few
-# attributes is enough to stop the simulated customer returning content-free replies,
-# which is what the retrieval work needs in order to be measurable at all.
-STUB_ASK_CYCLE = ("feature", "material", "color")
 
 # Per-field BM25 weights, in the column order declared in _build_index():
 # parent_asin, title, categories, features, details, store, description.
@@ -184,6 +186,16 @@ class Agent:
         detected_intent = detect_intent(user_message, state, extraction)
         override_resolution = resolve_override(user_message, state, extraction)
         classification = classify_constraints(user_message, extraction, state)
+        previous_ask_yield = evaluate_previous_ask_yield(state, extraction)
+        clarification = decide_clarification(
+            state,
+            extraction,
+            turn,
+            current_intent=detected_intent,
+            override_resolution=override_resolution,
+            previous_ask_yield=previous_ask_yield,
+        )
+        response_ask_attribute = select_response_ask_attribute(state, clarification)
         ranking_state = deepcopy(state)
         accumulate_information(ranking_state, extraction)
         apply_override(ranking_state, override_resolution)
@@ -203,8 +215,11 @@ class Agent:
         ranked = self.reranker.rerank(candidates, ranking_state, top_k=top_k)
         recommendations = to_evaluator_recommendations(ranked)
         response = {
-            "message": "Here are the closest matches I found.",
-            "ask_attribute": STUB_ASK_CYCLE[(turn - 1) % len(STUB_ASK_CYCLE)],
+            "message": clarification_message(
+                clarification,
+                response_ask_attribute=response_ask_attribute,
+            ),
+            "ask_attribute": response_ask_attribute,
             "recommendations": recommendations,
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
@@ -217,4 +232,10 @@ class Agent:
         apply_override(state, override_resolution)
         apply_constraint_classification(state, classification)
         state.intent = detected_intent
+        apply_clarification_decision(
+            state,
+            clarification,
+            previous_ask_yield,
+            response_ask_attribute=response_ask_attribute,
+        )
         return response

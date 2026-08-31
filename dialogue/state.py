@@ -51,6 +51,7 @@ class SessionState:
     soft_preferences: set[str] = field(default_factory=set)
     asked_attributes: set[str] = field(default_factory=set)
     last_ask_yielded: bool | None = None
+    last_asked_attribute: str | None = None
     turn: int = 0
     override_detected: bool = False
     message_history: list[dict[str, str]] = field(default_factory=list)
@@ -73,7 +74,10 @@ class SessionState:
         if strength not in {None, "hard", "soft"}:
             raise ValueError("strength must be 'hard', 'soft', or None")
 
-        stored_values = list(values)
+        stored_values: list[SlotValue] = []
+        for value in values:
+            if value not in stored_values:
+                stored_values.append(value)
         self.slots[slot_name] = stored_values
         self.hard_constraints.discard(slot_name)
         self.soft_preferences.discard(slot_name)

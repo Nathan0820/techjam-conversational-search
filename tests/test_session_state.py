@@ -8,6 +8,7 @@ from dataclasses import fields
 from pathlib import Path
 
 from dialogue.state import SUPPORTED_SLOTS, SessionState
+from dialogue.types import BudgetConstraint
 from starter.agent import Agent
 
 
@@ -44,6 +45,7 @@ class SessionStateTest(unittest.TestCase):
         self.assertEqual(state.soft_preferences, set())
         self.assertEqual(state.asked_attributes, set())
         self.assertIsNone(state.last_ask_yielded)
+        self.assertIsNone(state.last_asked_attribute)
         self.assertEqual(state.turn, 0)
         self.assertFalse(state.override_detected)
         self.assertEqual(state.message_history, [])
@@ -105,6 +107,22 @@ class SessionStateTest(unittest.TestCase):
         self.assertEqual(state.hard_constraints, set())
         self.assertEqual(state.soft_preferences, {"color"})
         self.assertNotIn("black", state.hard_constraints | state.soft_preferences)
+
+    def test_set_constraint_stably_deduplicates_without_aliasing(self) -> None:
+        """Keep first-seen string/budget values and copy the caller's list."""
+
+        budget = BudgetConstraint(maximum=100, currency="$")
+        supplied = ["black", "black"]
+        state = SessionState(session_id="one")
+
+        state.set_constraint("color", supplied, strength="hard")
+        state.set_constraint("budget", [budget, budget], strength="soft")
+        supplied.append("white")
+
+        self.assertEqual(state.slots["color"], ["black"])
+        self.assertEqual(state.slots["budget"], [budget])
+        self.assertEqual(state.hard_constraints, {"color"})
+        self.assertEqual(state.soft_preferences, {"budget"})
 
     def test_empty_or_unclassified_constraint_has_no_strength(self) -> None:
         state = SessionState(session_id="one")
@@ -225,6 +243,7 @@ class AgentSessionLifecycleTest(unittest.TestCase):
         old_state.set_constraint("brand", ["Columbia"], strength="soft")
         old_state.asked_attributes.add("size")
         old_state.last_ask_yielded = True
+        old_state.last_asked_attribute = "size"
         old_state.override_detected = True
         old_state.revealed_text.append("blue")
         old_state.active_revealed_text.append("blue")
@@ -241,6 +260,7 @@ class AgentSessionLifecycleTest(unittest.TestCase):
         self.assertEqual(new_state.soft_preferences, set())
         self.assertEqual(new_state.asked_attributes, set())
         self.assertIsNone(new_state.last_ask_yielded)
+        self.assertIsNone(new_state.last_asked_attribute)
         self.assertFalse(new_state.override_detected)
         self.assertEqual(new_state.message_history, [])
         self.assertEqual(new_state.revealed_text, [])
