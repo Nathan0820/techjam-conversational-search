@@ -9,6 +9,11 @@ from .clarification_policy import (
     decide_clarification,
     evaluate_previous_ask_yield,
 )
+from .constraint_classifier import (
+    ConstraintClassification,
+    apply_constraint_classification,
+    classify_constraints,
+)
 from .intent_detector import detect_intent
 from .override_handler import OverrideResolution, apply_override, resolve_override
 from .slot_extractor import BudgetConstraint, SlotExtraction, extract_slots
@@ -16,9 +21,10 @@ from .state import SUPPORTED_SLOTS, SessionState
 from .types import ShoppingIntent
 
 __all__ = [
-    "BudgetConstraint",
     "ALLOWED_ASK_ATTRIBUTES",
+    "BudgetConstraint",
     "ClarificationDecision",
+    "ConstraintClassification",
     "OverrideResolution",
     "SUPPORTED_SLOTS",
     "SessionState",
@@ -26,11 +32,13 @@ __all__ = [
     "SlotExtraction",
     "accumulate_information",
     "apply_clarification_decision",
+    "apply_constraint_classification",
     "apply_override",
     "clarification_message",
+    "classify_constraints",
     "decide_clarification",
     "detect_intent",
-    "extract_slots",
     "evaluate_previous_ask_yield",
+    "extract_slots",
     "resolve_override",
 ]
