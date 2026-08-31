@@ -51,6 +51,7 @@ class SessionState:
     soft_preferences: set[str] = field(default_factory=set)
     asked_attributes: set[str] = field(default_factory=set)
     last_ask_yielded: bool | None = None
+    last_asked_attribute: str | None = None
     turn: int = 0
     override_detected: bool = False
     message_history: list[dict[str, str]] = field(default_factory=list)

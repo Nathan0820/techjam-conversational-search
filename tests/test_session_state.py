@@ -44,6 +44,7 @@ class SessionStateTest(unittest.TestCase):
         self.assertEqual(state.soft_preferences, set())
         self.assertEqual(state.asked_attributes, set())
         self.assertIsNone(state.last_ask_yielded)
+        self.assertIsNone(state.last_asked_attribute)
         self.assertEqual(state.turn, 0)
         self.assertFalse(state.override_detected)
         self.assertEqual(state.message_history, [])
@@ -213,6 +214,7 @@ class AgentSessionLifecycleTest(unittest.TestCase):
         old_state.set_constraint("brand", ["Columbia"], strength="soft")
         old_state.asked_attributes.add("size")
         old_state.last_ask_yielded = True
+        old_state.last_asked_attribute = "size"
         old_state.override_detected = True
         old_state.revealed_text.append("blue")
         old_state.active_revealed_text.append("blue")
@@ -229,6 +231,7 @@ class AgentSessionLifecycleTest(unittest.TestCase):
         self.assertEqual(new_state.soft_preferences, set())
         self.assertEqual(new_state.asked_attributes, set())
         self.assertIsNone(new_state.last_ask_yielded)
+        self.assertIsNone(new_state.last_asked_attribute)
         self.assertFalse(new_state.override_detected)
         self.assertEqual(new_state.message_history, [])
         self.assertEqual(new_state.revealed_text, [])
