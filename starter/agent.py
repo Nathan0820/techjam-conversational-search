@@ -222,7 +222,11 @@ class Agent:
         # Reranking still uses the override-applied copy above, so stale constraints
         # cannot affect hard/soft matching even though they remain recall evidence
         # for the retrieval step during the correction turn.
-        phrases = [*state.active_revealed_text, *extraction.revealed_text]
+        phrases = [
+            *state.active_revealed_text,
+            *extraction.revealed_text,
+            *extraction.retrieval_hints,
+        ]
         query = " ".join(phrases) if phrases else user_message
 
         # Step 8 - retrieve a recall-oriented pool, hydrate its catalog metadata,

@@ -20,6 +20,7 @@ class SlotExtraction:
 
     slots: dict[str, list[SlotValue]] = field(default_factory=_empty_extracted_slots)
     revealed_text: list[str] = field(default_factory=list)
+    retrieval_hints: list[str] = field(default_factory=list)
 
 
 MATERIALS = (
@@ -94,6 +95,32 @@ PRODUCT_ATTRIBUTE_RE = re.compile(
     r"strap|torso|vamp|wash|waist|waterproof|width|zip|zipper)\b",
     re.IGNORECASE,
 )
+ATTRIBUTE_NAME_PATTERN = (
+    r"(?:product\s+type|item\s+type|use\s+case|category|material|fabric|"
+    r"color|colour|size|sizing|style|fit|brand|budget|price|feature|other)"
+)
+NO_PREFERENCE_CLAUSE_RE = re.compile(
+    rf"\b(?:"
+    rf"i\s+(?:(?:do\s+not|don['’]t)\s+have\s+"
+    rf"(?:(?:an?|any)\s+)?(?:additional\s+)?preference|"
+    rf"have\s+no\s+(?:additional\s+)?preference)|"
+    rf"no\s+(?:additional\s+)?preference"
+    rf")\s+(?:for|about|on)\s+(?:the\s+)?"
+    rf"(?P<attribute>{ATTRIBUTE_NAME_PATTERN})"
+    rf"(?:\s+anymore)?\b"
+    rf"(?:\s*;\s*please\s+use\s+your\s+judg(?:e)?ment)?",
+    re.IGNORECASE,
+)
+NON_EVIDENCE_SENTENCE_RE = re.compile(
+    r"\b(?:those\s+options\s+(?:are\s+not|aren['’]t)\s+quite\s+right\s+yet|"
+    r"ask\s+me\s+about\s+one\s+specific\s+attribute|"
+    r"please\s+use\s+your\s+judg(?:e)?ment)\b",
+    re.IGNORECASE,
+)
+USE_JUDGMENT_RE = re.compile(
+    r"\bplease\s+use\s+your\s+judg(?:e)?ment\b",
+    re.IGNORECASE,
+)
 
 
 @lru_cache(maxsize=1)
@@ -129,6 +156,33 @@ def _ngrams(message: str, maximum: int = 5) -> list[tuple[str, str]]:
             raw = message[tokens[start].start():tokens[end].end()]
             result.append((raw.rstrip(".,!?;:").casefold(), raw))
     return result
+
+
+def _retrieval_evidence_text(message: str) -> tuple[str, list[str]]:
+    """Remove dialogue clauses and return any one-turn attribute hints."""
+
+    no_preference_matches = list(NO_PREFERENCE_CLAUSE_RE.finditer(message))
+    cleaned = NO_PREFERENCE_CLAUSE_RE.sub(" ", message)
+    cleaned = NON_EVIDENCE_SENTENCE_RE.sub(" ", cleaned)
+    if cleaned == message:
+        return message, []
+    cleaned = cleaned.strip(" \t\r\n,;:.!?-")
+    cleaned = re.sub(r"^(?:but|and)\b\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"\s*(?:,|;)?\s*\b(?:but|and)\b\s*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = cleaned.strip(" \t\r\n,;:.!?-")
+    # A pure no-preference answer still identifies the attribute discussed. Keep
+    # that word as a current-turn retrieval hint without treating it as a user
+    # preference or persisting its surrounding dialogue boilerplate.
+    hints = [] if cleaned or USE_JUDGMENT_RE.search(message) else [
+        match.group("attribute")
+        for match in no_preference_matches
+    ]
+    return cleaned, list(dict.fromkeys(hints))
 
 
 def _add_value(values: list[SlotValue], value: SlotValue) -> None:
@@ -402,14 +456,18 @@ def extract_slots(user_message: str) -> SlotExtraction:
     result = SlotExtraction()
     if not user_message or not user_message.strip():
         return result
-    _extract_explicit_reveals(user_message, result)
-    _extract_descriptive_reveals(user_message, result)
-    _extract_budget(user_message, result)
-    _extract_sizes(user_message, result)
-    _extract_terms(user_message, result, "material", MATERIALS)
-    _extract_terms(user_message, result, "color", COLORS)
-    _extract_terms(user_message, result, "style", STYLE_PHRASES)
-    _extract_terms(user_message, result, "feature", FEATURE_PHRASES)
-    _extract_terms(user_message, result, "use_case", USE_CASE_PHRASES)
-    _extract_catalog_terms(user_message, result)
+    evidence_text, retrieval_hints = _retrieval_evidence_text(user_message)
+    result.retrieval_hints.extend(retrieval_hints)
+    if not evidence_text:
+        return result
+    _extract_explicit_reveals(evidence_text, result)
+    _extract_descriptive_reveals(evidence_text, result)
+    _extract_budget(evidence_text, result)
+    _extract_sizes(evidence_text, result)
+    _extract_terms(evidence_text, result, "material", MATERIALS)
+    _extract_terms(evidence_text, result, "color", COLORS)
+    _extract_terms(evidence_text, result, "style", STYLE_PHRASES)
+    _extract_terms(evidence_text, result, "feature", FEATURE_PHRASES)
+    _extract_terms(evidence_text, result, "use_case", USE_CASE_PHRASES)
+    _extract_catalog_terms(evidence_text, result)
     return result
