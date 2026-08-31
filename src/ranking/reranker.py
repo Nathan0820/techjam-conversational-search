@@ -26,8 +26,13 @@ class RankingWeights:
     other_hard_violation: float = 0.30
     negative_preference: float = 0.50
     buying_penalty_multiplier: float = 1.10
+    bm25_confidence_gap: float = 0.10
     feature_blend: float = 0.60
     cross_encoder_blend: float = 0.40
+
+
+_PRICE_VIOLATIONS = {"min_price", "max_price"}
+_CONFIRMED_VIOLATIONS = {"category", *_PRICE_VIOLATIONS}
 
 
 def _minmax(values: list[float | None], *, log_scale: bool = False) -> list[float]:
@@ -66,6 +71,26 @@ def _constraint_score(features: ProductFeatures) -> float:
     ])
 
 
+def _confident_bm25_leader(
+    features: Sequence[ProductFeatures],
+    minimum_relative_gap: float,
+) -> int | None:
+    """Return the clear BM25 leader, or None when retrieval is ambiguous."""
+
+    present = [
+        (index, item.bm25_score)
+        for index, item in enumerate(features)
+        if item.bm25_score is not None and math.isfinite(item.bm25_score)
+    ]
+    if len(present) < 2:
+        return None
+    present.sort(key=lambda pair: (-pair[1], pair[0]))
+    leader_index, leader_score = present[0]
+    runner_up_score = present[1][1]
+    relative_gap = (leader_score - runner_up_score) / max(abs(leader_score), 1e-12)
+    return leader_index if relative_gap >= minimum_relative_gap else None
+
+
 class Reranker:
     def __init__(
         self,
@@ -85,6 +110,10 @@ class Reranker:
         dense = _minmax([item.dense_score for item in features])
         ratings = [min(1.0, max(0.0, (item.rating or 0.0) / 5.0)) for item in features]
         reviews = _minmax([item.review_count for item in features], log_scale=True)
+        protected_index = _confident_bm25_leader(
+            features,
+            self.weights.bm25_confidence_gap,
+        )
         scenario = str(
             state_value(state, "intent", None)
             or state_value(state, "scenario_type", "")
@@ -122,10 +151,18 @@ class Reranker:
                 "final_score": feature_score,
                 "_features": item,
                 "_penalty": penalty,
+                "_bm25_protected": (
+                    index == protected_index
+                    and not (_CONFIRMED_VIOLATIONS & set(item.hard_violations))
+                ),
                 "_input_index": index,
             })
 
-        scored.sort(key=lambda item: (-item["feature_score"], item["_input_index"]))
+        scored.sort(key=lambda item: (
+            -int(item["_bm25_protected"]),
+            -item["feature_score"],
+            item["_input_index"],
+        ))
         shortlist_size = max(top_k, self.cross_encoder_candidates) if self.cross_encoder is not None else top_k
         shortlist = scored[:shortlist_size]
         if self.cross_encoder is not None and shortlist:
@@ -142,13 +179,18 @@ class Reranker:
                     + self.weights.cross_encoder_blend * cross_value
                     - item["_penalty"]
                 )
-            shortlist.sort(key=lambda item: (-item["final_score"], item["_input_index"]))
+            shortlist.sort(key=lambda item: (
+                -int(item["_bm25_protected"]),
+                -item["final_score"],
+                item["_input_index"],
+            ))
 
         for item in shortlist:
             item["features"] = asdict(item.pop("_features"))
             item.pop("base_score", None)
             item.pop("_input_index", None)
             item.pop("_penalty", None)
+            item.pop("_bm25_protected", None)
         return shortlist[:top_k]
 
 

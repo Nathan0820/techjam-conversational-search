@@ -9,7 +9,7 @@ from dialogue.state import SessionState
 from dialogue.types import BudgetConstraint
 from src.ranking.features import extract_features, state_to_query
 from src.ranking.diagnostics import ranking_failure_record
-from src.ranking.reranker import Reranker, rerank, to_evaluator_recommendations
+from src.ranking.reranker import RankingWeights, Reranker, rerank, to_evaluator_recommendations
 
 
 def product(asin: str, title: str, **fields: object) -> dict:
@@ -70,6 +70,84 @@ class RankingTest(unittest.TestCase):
         candidates = [product("wrong", "Red shoes", price=200, dense_score=1), product("right", "Red shoes", price=90)]
         state = {"scenario_type": "buying", "hard_constraints": {"max_price": 100}}
         self.assertEqual(rerank(candidates, state)[0]["product"]["parent_asin"], "right")
+
+    def test_confident_bm25_leader_is_protected_from_soft_evidence(self) -> None:
+        """Keep a clearly separated retrieval winner ahead of soft evidence."""
+
+        weights = RankingWeights(constraint=1.0, keyword=0.0, category=0.0, quality=0.0)
+        state = {"soft_preferences": {"color": "black"}}
+        candidates = [
+            product("leader", "White shirt", bm25_score=10),
+            product("soft-match", "Black shirt", bm25_score=5),
+        ]
+
+        ranked = Reranker(weights=weights).rerank(candidates, state)
+
+        self.assertEqual(ranked[0]["product"]["parent_asin"], "leader")
+
+    def test_confident_bm25_leader_cannot_override_budget_violation(self) -> None:
+        """Never protect retrieval confidence against a numeric violation."""
+
+        state = {"hard_constraints": {"max_price": 100}}
+        candidates = [
+            product(
+                "leader",
+                "Premium boots",
+                price=150,
+                bm25_score=10,
+            ),
+            product(
+                "compliant",
+                "Hiking boots",
+                price=80,
+                bm25_score=5,
+            ),
+        ]
+
+        ranked = Reranker(
+            weights=RankingWeights(price_violation=1.0),
+        ).rerank(candidates, state)
+
+        self.assertEqual(ranked[0]["product"]["parent_asin"], "compliant")
+
+    def test_confident_bm25_leader_cannot_override_category_violation(self) -> None:
+        """Treat an explicit category mismatch as confirmed evidence."""
+
+        state = {"hard_constraints": {"category": "boots"}}
+        candidates = [
+            product(
+                "leader",
+                "Formal earrings",
+                categories=["Earrings"],
+                bm25_score=10,
+            ),
+            product(
+                "compliant",
+                "Hiking boots",
+                categories=["Boots"],
+                bm25_score=5,
+            ),
+        ]
+
+        ranked = Reranker(
+            weights=RankingWeights(category_violation=1.0),
+        ).rerank(candidates, state)
+
+        self.assertEqual(ranked[0]["product"]["parent_asin"], "compliant")
+
+    def test_close_bm25_scores_allow_feature_reranking(self) -> None:
+        """Do not protect a retrieval leader when its score margin is small."""
+
+        weights = RankingWeights(constraint=1.0, keyword=0.0, category=0.0, quality=0.0)
+        state = {"soft_preferences": {"color": "black"}}
+        candidates = [
+            product("leader", "White shirt", bm25_score=10),
+            product("soft-match", "Black shirt", bm25_score=9.5),
+        ]
+
+        ranked = Reranker(weights=weights).rerank(candidates, state)
+
+        self.assertEqual(ranked[0]["product"]["parent_asin"], "soft-match")
 
     def test_member_b_session_state_schema(self) -> None:
         state = {
