@@ -63,8 +63,9 @@ def _terms(text: str) -> list[str]:
 #
 # `features` and `details` outweigh `title` because that is where the customer's
 # evidence lives: the constraints they state are drawn from those two fields, and
-# they never quote a product title. Weighting title heavily was TechJam's default
-# and measurably hurts (E5 in decisions.md).
+# they never quote a product title. Weighting title heavily was the shipped default
+# and measurably hurts: a title-dominant configuration scores below weighting every
+# field equally.
 #
 # Deliberately round numbers. Several configurations scored within ~1 session of
 # each other on the 200 public sessions, so finer tuning would be fitting noise

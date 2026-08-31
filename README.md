@@ -25,8 +25,6 @@ plus SQLite's built-in full-text search.
 Measured on the 200 public development sessions with the unmodified official evaluator.
 182 tests pass.
 
-**Method, results and design rationale are in [REPORT.md](REPORT.md).**
-
 ---
 
 ## Overview
@@ -125,9 +123,6 @@ state change turn by turn:
 python -B frontend/server.py              # http://127.0.0.1:8000
 ```
 
-Every experiment behind these numbers, including the ones we rejected, is written up in
-[REPORT.md](REPORT.md).
-
 ---
 
 ## Repository layout
@@ -181,8 +176,12 @@ final day landed within ±0.002 of each other. Where configurations differed by 
 about one session out of 200 we chose round numbers and stopped rather than selecting the
 winner — fitting that spread would not transfer to the hidden set.
 
-Fuller discussion, including two components we built, measured and deliberately removed,
-is in [REPORT.md](REPORT.md).
+**Two components were built, measured and removed.** Requiring hard constraints as a
+retrieval filter scored exactly zero, because a near-duplicate satisfies the same
+constraints as the target and so survives the filter too. A dense retrieval route via
+latent semantic analysis improved MRR but cost Hit@10, and constrained to break ties only
+it was worth +0.0008 — not enough to justify the dependencies. Both are described in our
+written report.
 
 ---
 

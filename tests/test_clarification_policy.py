@@ -190,9 +190,8 @@ class ClarificationPolicyTest(unittest.TestCase):
         """Use a lower evidence threshold for exploratory users."""
 
         # Evidence score 4 (material 3 + color 1), which clears the browsing threshold
-        # of 4 but not the buying threshold of 5. The previous fixture also included
-        # style, scoring 5, which no longer distinguishes the two now that buying is 5
-        # rather than 6 (see E8 in decisions.md).
+        # of 4 but not the buying threshold of 5. A fixture including style would score
+        # 5, which separates 4 from 6 but cannot separate 4 from 5.
         state = _state(category=["Shirts"], material=["cotton"], color=["black"])
         self.assertIsNone(_decide(state, intent="browsing").ask_attribute)
         self.assertIsNotNone(_decide(state, intent="buying").ask_attribute)
