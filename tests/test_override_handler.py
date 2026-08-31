@@ -272,6 +272,59 @@ class OverrideHandlerTest(unittest.TestCase):
         self.assertNotIn(old_phrase, state.active_revealed_text)
         self.assertIn("black", state.active_revealed_text)
 
+    def test_conflicting_category_switch_prunes_old_product_context(self) -> None:
+        """Replace Belts and remove its proven feature context across paraphrases."""
+
+        messages = (
+            "skip the belt, show me shoes",
+            "actually, lets do running shoes instead",
+            "change that to running shoes",
+        )
+        for message in messages:
+            with self.subTest(message=message):
+                state = SessionState("session")
+                _record_prior_turn(state, "I'm looking for Belts. Buckle closure")
+
+                _apply_message(state, message)
+
+                self.assertEqual(state.slots["category"], ["Shoes"])
+                self.assertEqual(state.slots["feature"], [])
+                self.assertTrue(state.override_detected)
+                self.assertIn("Buckle closure", state.revealed_text)
+                self.assertNotIn("Buckle closure", state.active_revealed_text)
+                self.assertNotIn("Belts.", state.active_revealed_text)
+
+    def test_category_switch_preserves_transferable_constraints(self) -> None:
+        """Keep budget and color while pruning an old category-specific feature."""
+
+        state = SessionState("session")
+        _record_prior_turn(state, "I'm looking for Belts. Buckle closure")
+        _record_prior_turn(state, "For that, what matters is: black.")
+        _record_prior_turn(state, "For that, what matters is: budget under $100.")
+
+        _apply_message(state, "show me running shoes instead")
+
+        self.assertEqual(state.slots["category"], ["Shoes"])
+        self.assertEqual(state.slots["feature"], [])
+        self.assertEqual(state.slots["color"], ["black"])
+        self.assertEqual(
+            state.slots["budget"],
+            [BudgetConstraint(maximum=100, currency="$")],
+        )
+
+    def test_compatible_category_refinement_is_not_destructive(self) -> None:
+        """Treat running shoes as compatible with an active Shoes category."""
+
+        state = SessionState("session")
+        _record_prior_turn(state, "I'm looking for Shoes. waterproof")
+
+        _apply_message(state, "show me running shoes")
+
+        self.assertEqual(state.slots["category"], ["Shoes"])
+        self.assertEqual(state.slots["feature"], ["waterproof"])
+        self.assertEqual(state.slots["use_case"], ["running"])
+        self.assertFalse(state.override_detected)
+
     def test_unrelated_constraints_are_preserved(self) -> None:
         """Keep category, material, and size during a color replacement."""
 
@@ -443,6 +496,25 @@ class OverrideAgentIntegrationTest(unittest.TestCase):
                 "Actually, ignore my earlier preference. What I need is: leather.",
                 1,
                 10,
+            )
+
+        self.assertEqual(state, before)
+
+    def test_failed_category_switch_leaves_full_state_unchanged(self) -> None:
+        """Keep category provenance and classifications transactional on failure."""
+
+        self.agent.reset("session", {})
+        state = self.agent.sessions["session"]
+        _record_prior_turn(state, "I'm looking for Belts. Buckle closure")
+        state.set_constraint("category", state.slots["category"], strength="hard")
+        state.set_constraint("feature", state.slots["feature"], strength="hard")
+        state.intent = "buying"
+        before = copy.deepcopy(state)
+        self.agent.connection.close()
+
+        with self.assertRaises(sqlite3.ProgrammingError):
+            self.agent.respond(
+                "session", "skip the belt, show me shoes", 2, 10,
             )
 
         self.assertEqual(state, before)

@@ -54,6 +54,7 @@ SLOT_TERMS = {
     "feature": ("feature",),
     "use_case": ("use case",),
 }
+CATEGORY_SWITCH_TRANSFERABLE_SLOTS = frozenset({"budget", "color", "brand"})
 
 
 @dataclass(frozen=True)
@@ -198,6 +199,70 @@ def _active_values_in_phrases(
     }
 
 
+def _category_tokens(value: SlotValue) -> frozenset[str]:
+    """Normalize category words for conservative alias/refinement comparison."""
+
+    if not isinstance(value, str):
+        return frozenset()
+    tokens: set[str] = set()
+    for token in re.findall(r"[a-z0-9]+", value.casefold()):
+        if token.endswith("ies") and len(token) > 3:
+            token = f"{token[:-3]}y"
+        elif token.endswith("s") and not token.endswith(("ss", "us")):
+            token = token[:-1]
+        tokens.add(token)
+    return frozenset(tokens)
+
+
+def _categories_compatible(left: SlotValue, right: SlotValue) -> bool:
+    """Treat equal, singular/plural, and lexical refinements as compatible."""
+
+    left_tokens = _category_tokens(left)
+    right_tokens = _category_tokens(right)
+    return bool(
+        left_tokens
+        and right_tokens
+        and (left_tokens <= right_tokens or right_tokens <= left_tokens)
+    )
+
+
+def _conflicting_category_replacements(
+    state: SessionState,
+    extraction: SlotExtraction,
+) -> tuple[SlotValue, ...]:
+    """Return confidently extracted categories incompatible with active ones."""
+
+    current = tuple(state.slots["category"])
+    if not current:
+        return ()
+    return tuple(
+        category
+        for category in extraction.slots.get("category", ())
+        if not any(_categories_compatible(category, active) for active in current)
+    )
+
+
+def _prior_category_context_phrases(
+    state: SessionState,
+) -> tuple[str, ...]:
+    """Find active raw phrases from turns explicitly naming the old category."""
+
+    active_phrases = set(state.active_revealed_text)
+    associated: list[str] = []
+    for _, prior_extraction in _prior_user_extractions(state):
+        if not any(
+            _categories_compatible(previous, active)
+            for previous in prior_extraction.slots.get("category", ())
+            for active in state.slots["category"]
+        ):
+            continue
+        associated.extend(
+            phrase for phrase in prior_extraction.revealed_text
+            if phrase in active_phrases
+        )
+    return tuple(dict.fromkeys(associated))
+
+
 def _phrases_for_values(
     phrases: tuple[str, ...],
     slot_name: str,
@@ -299,6 +364,7 @@ def resolve_override(
                     *retained,
                 ]))
 
+    category_replacements = _conflicting_category_replacements(state, extraction)
     replacement_values: dict[str, tuple[SlotValue, ...]] = {}
     replacement_signal = bool(REPLACEMENT_PATTERN.search(user_message))
     additive_signal = bool(ADDITIVE_PATTERN.search(user_message))
@@ -317,6 +383,24 @@ def resolve_override(
             )
             if candidates and list(candidates) != state.slots[slot_name]:
                 replacement_values[slot_name] = candidates
+    if category_replacements:
+        replacement_values["category"] = category_replacements
+
+        category_context = _prior_category_context_phrases(state)
+        for slot_name, previous_values in _active_values_in_phrases(
+            state, category_context,
+        ).items():
+            if slot_name in CATEGORY_SWITCH_TRANSFERABLE_SLOTS:
+                continue
+            stale_values = tuple(
+                value for value in previous_values
+                if value not in extraction.slots.get(slot_name, ())
+            )
+            if stale_values:
+                remove_values[slot_name] = tuple(dict.fromkeys([
+                    *remove_values.get(slot_name, ()),
+                    *stale_values,
+                ]))
 
     phrases_to_remove: list[str] = list(general_retraction_phrases)
     for slot_name in clear_slots:
@@ -347,6 +431,7 @@ def resolve_override(
         GENERAL_RETRACTION_PATTERN.search(user_message)
         or requested_clear_slots
         or remove_values
+        or category_replacements
         or (replacement_requested and has_extracted_values)
     )
     return OverrideResolution(
