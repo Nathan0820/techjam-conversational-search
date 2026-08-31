@@ -222,9 +222,17 @@ def _extract_budget(message: str, result: SlotExtraction) -> None:
     patterns = (
         (rf"(?i)\b(?:between)\s+{amount}\s+(?:and)\s+{amount}", "range"),
         (rf"(?i)\b(?:from)\s+{amount}\s+(?:to)\s+{amount}", "range"),
-        (rf"(?i)\b(?:under|below|less than|up to|maximum|max)\s+{amount}", "max"),
+        (
+            rf"(?i)\b(?:under|below|less than|no more than|at most|up to|maximum|max)"
+            rf"\s+{amount}",
+            "max",
+        ),
         (rf"(?i)\b(?:over|above|more than|minimum|min)\s+{amount}", "min"),
-        (rf"(?i)\b(?:around|about|approximately|approx\.?|budget around)\s+{amount}", "approx"),
+        (
+            rf"(?i)\b(?:around|about|approximately|approx\.?|roughly|budget around)"
+            rf"\s+{amount}",
+            "approx",
+        ),
     )
     for pattern, kind in patterns:
         match = re.search(pattern, message)

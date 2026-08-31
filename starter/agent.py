@@ -9,6 +9,10 @@ from copy import deepcopy
 from pathlib import Path
 
 from dialogue.accumulator import accumulate_information
+from dialogue.constraint_classifier import (
+    apply_constraint_classification,
+    classify_constraints,
+)
 from dialogue.intent_detector import detect_intent
 from dialogue.override_handler import apply_override, resolve_override
 from dialogue.slot_extractor import extract_slots
@@ -155,6 +159,7 @@ class Agent:
         extraction = extract_slots(user_message)
         detected_intent = detect_intent(user_message, state, extraction)
         override_resolution = resolve_override(user_message, state, extraction)
+        classification = classify_constraints(user_message, extraction, state)
         # Step 7 - build the query from the constraint phrases the customer has given,
         # rather than their raw message text, which drags in conversational filler.
         # `state` only knows about previous turns at this point, because nothing is
@@ -190,5 +195,6 @@ class Agent:
         ])
         accumulate_information(state, extraction)
         apply_override(state, override_resolution)
+        apply_constraint_classification(state, classification)
         state.intent = detected_intent
         return response
