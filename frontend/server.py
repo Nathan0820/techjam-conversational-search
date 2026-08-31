@@ -1,3 +1,13 @@
+"""Local console for driving the agent by hand.
+
+Not part of scoring, and the evaluator never touches it. It exists because aggregate
+metrics hide how a conversation actually unfolds: this shows what the agent knows
+after each turn, which question it chose and why the ranking changed, which is how
+several defects in the dialogue layer were found.
+
+Standard library only, single-threaded, and bound to localhost.
+"""
+
 from __future__ import annotations
 
 import json
@@ -25,6 +35,8 @@ PORT = 8000
 
 
 def metrics_payload(data: dict[str, Any]) -> dict[str, Any]:
+    """Reduce a full evaluator result to the fields the page displays."""
+
     return {
         "available": True,
         "sample_count": data.get("sample_count"),
@@ -37,6 +49,8 @@ def metrics_payload(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_metrics() -> dict[str, Any]:
+    """Read the last saved evaluation, or report that none exists yet."""
+
     if not RESULTS_PATH.exists():
         return {"available": False}
     data = json.loads(RESULTS_PATH.read_text(encoding="utf-8"))
@@ -44,7 +58,11 @@ def load_metrics() -> dict[str, Any]:
 
 
 class App:
+    """Holds the one live Agent and the catalog lookups the page needs."""
+
     def __init__(self) -> None:
+        """Build the agent and index the catalog once, at startup."""
+
         self.agent = Agent(CATALOG_PATH)
         self.catalog_by_asin = {}
         self.categories_by_asin = {}
@@ -60,6 +78,8 @@ class App:
         self.public_samples = load_jsonl(PUBLIC_SET_PATH)
 
     def reset(self, session_id: str | None = None) -> str:
+        """Start a fresh conversation and return its id."""
+
         identifier = session_id or uuid.uuid4().hex
         self.agent.reset(identifier, {})
         return identifier
@@ -89,6 +109,12 @@ class App:
         return metrics_payload(result)
 
     def chat(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Run one turn and return the agent's reply plus its current state.
+
+        Raises ValueError with a message meant for the page when the session is
+        unknown, the message is empty, or the turn is outside the ten-turn limit.
+        """
+
         session_id = str(payload.get("session_id", "")).strip()
         message = str(payload.get("message", "")).strip()
         turn = payload.get("turn", 1)
@@ -135,10 +161,16 @@ APP: App
 
 
 class Handler(BaseHTTPRequestHandler):
+    """Serves the static page and the small JSON API behind it."""
+
     def log_message(self, format: str, *args: object) -> None:
+        """Prefix request logs so they are distinguishable from agent output."""
+
         print(f"[frontend] {format % args}")
 
     def send_json(self, status: int, value: Any) -> None:
+        """Write a JSON response, marked no-store so the page never shows stale metrics."""
+
         body = json.dumps(value).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -148,6 +180,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:
+        """Serve the last saved metrics, or a static file from the page directory."""
+
         path = urlparse(self.path).path
         if path == "/api/metrics":
             self.send_json(200, load_metrics())
@@ -167,6 +201,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
     def do_POST(self) -> None:
+        """Handle session reset, a chat turn, or a full re-evaluation of the agent."""
+
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -185,6 +221,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    """Build the agent, then serve until interrupted."""
+
     global APP
     if not CATALOG_PATH.exists():
         raise SystemExit(f"Catalog not found: {CATALOG_PATH}")
