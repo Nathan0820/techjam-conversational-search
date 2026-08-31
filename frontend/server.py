@@ -12,20 +12,19 @@ from urllib.parse import urlparse
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from evaluator.local_evaluator import evaluate, load_jsonl
 from starter.agent import Agent
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 CATALOG_PATH = ROOT / "data" / "catalog.jsonl"
 RESULTS_PATH = ROOT / "results.json"
+PUBLIC_SET_PATH = ROOT / "data" / "public_set.jsonl"
 HOST = "127.0.0.1"
 PORT = 8000
 
 
-def load_metrics() -> dict[str, Any]:
-    if not RESULTS_PATH.exists():
-        return {"available": False}
-    data = json.loads(RESULTS_PATH.read_text(encoding="utf-8"))
+def metrics_payload(data: dict[str, Any]) -> dict[str, Any]:
     return {
         "available": True,
         "sample_count": data.get("sample_count"),
@@ -37,19 +36,57 @@ def load_metrics() -> dict[str, Any]:
     }
 
 
+def load_metrics() -> dict[str, Any]:
+    if not RESULTS_PATH.exists():
+        return {"available": False}
+    data = json.loads(RESULTS_PATH.read_text(encoding="utf-8"))
+    return metrics_payload(data)
+
+
 class App:
     def __init__(self) -> None:
         self.agent = Agent(CATALOG_PATH)
         self.catalog_by_asin = {}
+        self.categories_by_asin = {}
         with CATALOG_PATH.open(encoding="utf-8") as handle:
             for line in handle:
                 product = json.loads(line)
-                self.catalog_by_asin[str(product["parent_asin"])] = product
+                parent_asin = str(product["parent_asin"])
+                self.catalog_by_asin[parent_asin] = product
+                self.categories_by_asin[parent_asin] = [
+                    str(value) for value in product.get("categories") or []
+                ]
+        self.catalog_ids = set(self.catalog_by_asin)
+        self.public_samples = load_jsonl(PUBLIC_SET_PATH)
 
     def reset(self, session_id: str | None = None) -> str:
         identifier = session_id or uuid.uuid4().hex
         self.agent.reset(identifier, {})
         return identifier
+
+    def evaluate_public_set(self) -> dict[str, Any]:
+        """Evaluate the current agent and atomically publish frontend metrics."""
+
+        preserved_sessions = set(self.agent.sessions)
+        try:
+            result = evaluate(
+                self.agent,
+                self.public_samples,
+                self.catalog_ids,
+                self.categories_by_asin,
+                self.catalog_by_asin,
+            )
+        finally:
+            for session_id in set(self.agent.sessions) - preserved_sessions:
+                self.agent.sessions.pop(session_id, None)
+
+        temporary_path = RESULTS_PATH.with_name(f".{RESULTS_PATH.name}.tmp")
+        temporary_path.write_text(
+            json.dumps(result, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary_path.replace(RESULTS_PATH)
+        return metrics_payload(result)
 
     def chat(self, payload: dict[str, Any]) -> dict[str, Any]:
         session_id = str(payload.get("session_id", "")).strip()
@@ -105,6 +142,7 @@ class Handler(BaseHTTPRequestHandler):
         body = json.dumps(value).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -123,6 +161,7 @@ class Handler(BaseHTTPRequestHandler):
         mime_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
         self.send_response(200)
         self.send_header("Content-Type", f"{mime_type}; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(content)))
         self.end_headers()
         self.wfile.write(content)
@@ -133,6 +172,8 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length) or b"{}")
             if self.path == "/api/reset":
                 self.send_json(200, {"session_id": APP.reset()})
+            elif self.path == "/api/evaluate":
+                self.send_json(200, APP.evaluate_public_set())
             elif self.path == "/api/chat":
                 self.send_json(200, APP.chat(payload))
             else:
