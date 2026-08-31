@@ -9,6 +9,12 @@ from copy import deepcopy
 from pathlib import Path
 
 from dialogue.accumulator import accumulate_information
+from dialogue.clarification_policy import (
+    apply_clarification_decision,
+    clarification_message,
+    decide_clarification,
+    evaluate_previous_ask_yield,
+)
 from dialogue.intent_detector import detect_intent
 from dialogue.override_handler import apply_override, resolve_override
 from dialogue.slot_extractor import extract_slots
@@ -44,11 +50,6 @@ def _terms(text: str) -> list[str]:
         if len(token) > 1 and token.lower() not in STOPWORDS
     ]
 
-
-# STUB (owned by role B, replace with the real ask policy). Cycling through a few
-# attributes is enough to stop the simulated customer returning content-free replies,
-# which is what the retrieval work needs in order to be measurable at all.
-STUB_ASK_CYCLE = ("feature", "material", "color")
 
 # Per-field BM25 weights, in the column order declared in _build_index():
 # parent_asin, title, categories, features, details, store, description.
@@ -155,6 +156,15 @@ class Agent:
         extraction = extract_slots(user_message)
         detected_intent = detect_intent(user_message, state, extraction)
         override_resolution = resolve_override(user_message, state, extraction)
+        previous_ask_yield = evaluate_previous_ask_yield(state, extraction)
+        clarification = decide_clarification(
+            state,
+            extraction,
+            turn,
+            current_intent=detected_intent,
+            override_resolution=override_resolution,
+            previous_ask_yield=previous_ask_yield,
+        )
         # Step 7 - build the query from the constraint phrases the customer has given,
         # rather than their raw message text, which drags in conversational filler.
         # `state` only knows about previous turns at this point, because nothing is
@@ -178,8 +188,8 @@ class Agent:
             for parent_asin, _ in candidates
         ]
         response = {
-            "message": "Here are the closest matches I found.",
-            "ask_attribute": STUB_ASK_CYCLE[(turn - 1) % len(STUB_ASK_CYCLE)],
+            "message": clarification_message(clarification),
+            "ask_attribute": clarification.ask_attribute,
             "recommendations": recommendations,
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
@@ -191,4 +201,5 @@ class Agent:
         accumulate_information(state, extraction)
         apply_override(state, override_resolution)
         state.intent = detected_intent
+        apply_clarification_decision(state, clarification, previous_ask_yield)
         return response
