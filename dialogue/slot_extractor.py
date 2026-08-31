@@ -171,7 +171,16 @@ def _extract_descriptive_reveals(message: str, result: SlotExtraction) -> None:
 
     initial_match = INITIAL_PREFERENCE_RE.match(message)
     if initial_match:
-        _add_raw(result, initial_match.group("phrase").strip())
+        phrase = initial_match.group("phrase").strip()
+        # An opening message can carry an explicit reveal after the category, e.g.
+        # "I'm looking for Women Leggings. A key requirement is: polyester."
+        # _extract_explicit_reveals already captures the value on its own, so adding
+        # the framing sentence here would put its wording ("key", "requirement") into
+        # the retrieval query. Those words are rare in the catalog and therefore score
+        # highly under BM25, despite carrying no preference. This is the same guard
+        # applied to non-opening messages below.
+        if not EXPLICIT_REVEAL_RE.search(phrase) and not OVERRIDE_SCAFFOLD_RE.search(phrase):
+            _add_raw(result, phrase)
         return
     if EXPLICIT_REVEAL_RE.search(message) or OVERRIDE_SCAFFOLD_RE.search(message):
         return

@@ -53,8 +53,16 @@ STUB_ASK_CYCLE = ("feature", "material", "color")
 
 # Per-field BM25 weights, in the column order declared in _build_index():
 # parent_asin, title, categories, features, details, store, description.
-# These are still TechJam's defaults; tuning them is retrieval work (role A).
-FIELD_WEIGHTS = (0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0)
+#
+# `features` and `details` outweigh `title` because that is where the customer's
+# evidence lives: the constraints they state are drawn from those two fields, and
+# they never quote a product title. Weighting title heavily was TechJam's default
+# and measurably hurts (E5 in decisions.md).
+#
+# Deliberately round numbers. Several configurations scored within ~1 session of
+# each other on the 200 public sessions, so finer tuning would be fitting noise
+# that will not transfer to the 800 hidden ones.
+FIELD_WEIGHTS = (0.0, 2.0, 4.0, 8.0, 8.0, 1.5, 1.0)
 
 # Cap on how many distinct terms are sent to FTS5 in one query.
 MAX_QUERY_TERMS = 40
@@ -174,16 +182,12 @@ class Agent:
         accumulate_information(ranking_state, extraction)
         apply_override(ranking_state, override_resolution)
         ranking_state.intent = detected_intent
-        # Step 7 - build the query from every customer turn so far, including this one,
-        # so constraints revealed earlier in the session still influence retrieval.
-        # Nothing is written to state yet: if retrieval raises, the turn must leave the
-        # session untouched. Switching this to state.revealed_text is a separate change.
-        prior_messages = [
-            entry["content"]
-            for entry in state.message_history
-            if entry["role"] == "user"
-        ]
-        query = " ".join([*prior_messages, user_message])
+        # Build the query from active extracted constraints, including this turn.
+        # The copied state has current overrides applied, so retracted phrases are
+        # excluded without committing the turn before retrieval succeeds.
+        phrases = ranking_state.active_revealed_text
+        query = " ".join(phrases) if phrases else user_message
+
         # Step 8 - retrieve a recall-oriented pool, hydrate its catalog metadata,
         # and let ranking choose the final evaluator-facing top_k.
         retrieved = self.retrieve(query)
