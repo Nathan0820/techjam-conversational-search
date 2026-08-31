@@ -25,6 +25,15 @@ BUYING_PATTERNS = (
     r"\brecommend\s+me\b",
     r"\bwhich\s+.+?\s+should\s+i\s+get\b",
     r"\bwhat\s+should\s+i\s+buy\b",
+    # Stating a firm requirement is the clearest buying signal there is, and none of
+    # the patterns above caught it: a customer who says "looking for X, a key
+    # requirement is Y" matched nothing and fell through to the browsing default.
+    r"\brequirements?\s+(?:is|are)\b",
+    r"\bmy\s+(?:key\s+)?requirements?\b",
+    r"\bmust\s+(?:be|have)\b",
+    r"\b(?:needs?|has|have)\s+to\s+be\b",
+    r"\bit\s+(?:needs?|has)\s+to\b",
+    r"\bspecifically\b",
 )
 BROWSING_PATTERNS = (
     r"\bjust\s+browsing\b",
@@ -35,7 +44,13 @@ BROWSING_PATTERNS = (
     r"\b(?:do\s+not|don't)\s+(?:need|want)\s+to\s+buy\b",
     r"\b(?:do\s+not|don't)\s+need\s+anything\s+specific\b",
     r"\bnot\s+sure\b",
-    r"\bi(?:'m|\s+am)\s+exploring\b",
+    # "I'm exploring" alone missed the far more common "I'm still exploring" and
+    # "I'm just exploring" — an adverb between the pronoun and the verb broke the match.
+    r"\bi(?:'m|\s+am)\s+(?:still\s+|just\s+|only\s+)?exploring\b",
+    r"\bstill\s+(?:exploring|browsing|deciding|looking)\b",
+    r"\bbrowsing\b",
+    r"\bopen\s+to\s+(?:anything|suggestions|ideas)\b",
+    r"\bhaven't\s+decided\b",
     r"\bi(?:'m|\s+am)\s+(?:interested\s+in|considering)\b",
     r"\bwhat\s+(?:kinds?|options|styles)\b",
     r"\btell\s+me\s+about\b",

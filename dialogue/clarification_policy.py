@@ -179,7 +179,13 @@ def _has_enough_information(
     # Exploratory users need less specificity, but one isolated attribute is
     # not a reliable stopping point in this catalog. Two strong facts (or an
     # equivalent mix) keep browsing concise while buying remains more exacting.
-    threshold = 4 if intent == "browsing" else 6
+    #
+    # Buying was 6 while intent detection was broken and classified 74 of 80 buying
+    # sessions as browsing, so this branch almost never ran and 6 was never really
+    # tested. With detection corrected (E8) it fires on all 80 and 6 asks too much:
+    # 6 scores 0.7939 against 0.7975 at 5 and 0.7977 at 4. Five keeps intent
+    # genuinely driving behaviour while costing nothing measurable.
+    threshold = 4 if intent == "browsing" else 5
     if previous_ask_yield is False:
         threshold = max(4, threshold - 1)
 
