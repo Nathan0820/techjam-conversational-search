@@ -15,9 +15,23 @@ REPLACEMENT_PATTERN = re.compile(
     r"make\s+it|switch\s+to|i\s+changed\s+my\s+mind)\b",
     re.IGNORECASE,
 )
+# The evaluator always retracts with one fixed sentence ("Actually, ignore my earlier
+# preference. What I need is: X.", local_evaluator.py:85), but a customer phrases this
+# many ways. Matching only the simulator's wording means retraction silently stops
+# working on any paraphrase — a failure invisible in our public-set metrics, since the
+# simulator never paraphrases.
 GENERAL_RETRACTION_PATTERN = re.compile(
-    r"\b(?:ignore\s+my\s+earlier\s+preference|forget\s+that|scratch\s+that|"
-    r"never\s+mind|i\s+changed\s+my\s+mind)\b",
+    r"\b(?:"
+    r"(?:ignore|disregard|forget)\s+(?:that|this|it|the\s+above|what\s+i\s+said|"
+    r"my\s+(?:earlier|previous|last)\s+(?:preference|request|message))"
+    r"|scratch\s+that"
+    r"|never\s+mind"
+    r"|i\s+changed\s+my\s+mind"
+    r"|on\s+second\s+thought"
+    # "my mistake" was considered and rejected: it fires on ordinary product wording
+    # such as "mistake-proof", and a false positive here erases constraints the
+    # customer still holds, which is worse than missing a rare phrasing.
+    r")\b",
     re.IGNORECASE,
 )
 SLOT_TERMS = {
