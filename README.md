@@ -190,7 +190,7 @@ is in [REPORT.md](REPORT.md).
 
 | | area |
 |---|---|
-| **Nathan Wong Yong Jie** (`Nathan0820`) — team lead | Ranking — feature extraction, reranker, override routing, retrieval hints; local test console |
+| **Nathan Wong Yong Jie** (`Nathan0820`) | Ranking — feature extraction, reranker, override routing, retrieval hints; local test console |
 | **Lew Wai Loon** (`lewwai`) | Retrieval — query construction, BM25 field weighting, the `retrieve()` interface, recall and failure diagnostics, latent semantic index |
 | **Wong E Shen** (`WongES05`) | Dialogue — `SessionState`, slot extraction, accumulation, intent detection, override handling, hard/soft classification, clarification policy |
 | **Lee Chong Sheng** (`matyehh`) | Report drafting and the demo video |
