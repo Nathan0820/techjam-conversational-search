@@ -195,7 +195,7 @@ class Agent:
             override_resolution=override_resolution,
             previous_ask_yield=previous_ask_yield,
         )
-        response_ask_attribute = select_response_ask_attribute(state, clarification)
+        response_ask_attribute = select_response_ask_attribute(state, clarification, previous_ask_yield=previous_ask_yield,)
         ranking_state = deepcopy(state)
         accumulate_information(ranking_state, extraction)
         apply_override(ranking_state, override_resolution)
