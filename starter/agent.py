@@ -14,6 +14,7 @@ from dialogue.clarification_policy import (
     clarification_message,
     decide_clarification,
     evaluate_previous_ask_yield,
+    select_response_ask_attribute,
 )
 from dialogue.constraint_classifier import (
     apply_constraint_classification,
@@ -170,6 +171,7 @@ class Agent:
             override_resolution=override_resolution,
             previous_ask_yield=previous_ask_yield,
         )
+        response_ask_attribute = select_response_ask_attribute(state, clarification)
         # Step 7 - build the query from the constraint phrases the customer has given,
         # rather than their raw message text, which drags in conversational filler.
         # `state` only knows about previous turns at this point, because nothing is
@@ -193,8 +195,11 @@ class Agent:
             for parent_asin, _ in candidates
         ]
         response = {
-            "message": clarification_message(clarification),
-            "ask_attribute": clarification.ask_attribute,
+            "message": clarification_message(
+                clarification,
+                response_ask_attribute=response_ask_attribute,
+            ),
+            "ask_attribute": response_ask_attribute,
             "recommendations": recommendations,
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
@@ -207,5 +212,10 @@ class Agent:
         apply_override(state, override_resolution)
         apply_constraint_classification(state, classification)
         state.intent = detected_intent
-        apply_clarification_decision(state, clarification, previous_ask_yield)
+        apply_clarification_decision(
+            state,
+            clarification,
+            previous_ask_yield,
+            response_ask_attribute=response_ask_attribute,
+        )
         return response

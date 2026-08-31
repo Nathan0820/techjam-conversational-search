@@ -243,11 +243,28 @@ def decide_clarification(
     return ClarificationDecision(None, False)
 
 
-def clarification_message(decision: ClarificationDecision) -> str:
-    """Build a short response whose question matches the selected attribute."""
+def select_response_ask_attribute(
+    state: SessionState,
+    decision: ClarificationDecision,
+) -> str | None:
+    """Adapt an act decision to one evaluator-safe, non-repeated fallback."""
+
+    if decision.ask_attribute is not None:
+        return decision.ask_attribute
+    if "other" not in state.asked_attributes:
+        return "other"
+    return None
+
+
+def clarification_message(
+    decision: ClarificationDecision,
+    *,
+    response_ask_attribute: str | None = None,
+) -> str:
+    """Build a response matching the policy or its API-facing fallback."""
 
     base = "Here are the closest matches I found."
-    attribute = decision.ask_attribute
+    attribute = response_ask_attribute or decision.ask_attribute
     if attribute is None:
         return base
     return f"{base} {QUESTIONS[attribute]}"
@@ -257,10 +274,13 @@ def apply_clarification_decision(
     state: SessionState,
     decision: ClarificationDecision,
     previous_ask_yield: bool | None,
+    *,
+    response_ask_attribute: str | None = None,
 ) -> None:
-    """Commit question history and yield tracking after response success."""
+    """Commit policy/output ask tracking only after response success."""
 
+    attribute = response_ask_attribute or decision.ask_attribute
     state.last_ask_yielded = previous_ask_yield
-    state.last_asked_attribute = decision.ask_attribute
-    if decision.ask_attribute is not None:
-        state.asked_attributes.add(decision.ask_attribute)
+    state.last_asked_attribute = attribute
+    if attribute is not None:
+        state.asked_attributes.add(attribute)
