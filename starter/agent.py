@@ -170,6 +170,23 @@ class Agent:
             })
         return candidates
 
+    @staticmethod
+    def retrieval_order(
+        candidates: list[dict],
+        top_k: int,
+    ) -> list[dict]:
+        """Return evaluator-ready candidates without changing BM25 order."""
+
+        if top_k <= 0:
+            return []
+        return [
+            {
+                "product": candidate,
+                "final_score": float(candidate.get("bm25_score") or 0.0),
+            }
+            for candidate in candidates[:top_k]
+        ]
+
     def respond(
         self,
         session_id: str,
@@ -205,14 +222,25 @@ class Agent:
         # Reranking still uses the override-applied copy above, so stale constraints
         # cannot affect hard/soft matching even though they remain recall evidence
         # for the retrieval step during the correction turn.
-        phrases = [*state.active_revealed_text, *extraction.revealed_text]
+        phrases = [
+            *state.active_revealed_text,
+            *extraction.revealed_text,
+            *extraction.retrieval_hints,
+        ]
         query = " ".join(phrases) if phrases else user_message
 
         # Step 8 - retrieve a recall-oriented pool, hydrate its catalog metadata,
         # and let ranking choose the final evaluator-facing top_k.
         retrieved = self.retrieve(query)
         candidates = self.ranking_candidates(retrieved)
-        ranked = self.reranker.rerank(candidates, ranking_state, top_k=top_k)
+        # An explicit correction is a transition turn: retrieval intentionally
+        # retains both the old and new wording for recall, while ranking_state has
+        # already removed the old constraint. Preserve BM25 ordering for this turn
+        # so the structured reranker does not over-correct that mixed evidence.
+        if override_resolution.detected:
+            ranked = self.retrieval_order(candidates, top_k)
+        else:
+            ranked = self.reranker.rerank(candidates, ranking_state, top_k=top_k)
         recommendations = to_evaluator_recommendations(ranked)
         response = {
             "message": clarification_message(

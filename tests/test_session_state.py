@@ -236,6 +236,27 @@ class AgentSessionLifecycleTest(unittest.TestCase):
         self.assertIn("feature", state.soft_preferences)
         self.assertNotIn("feature", state.hard_constraints)
 
+    def test_no_preference_reply_uses_only_a_transient_attribute_hint(self) -> None:
+        """Discard dialogue boilerplate without persisting its attribute hint."""
+
+        self.agent.reset("session", {})
+        state = self.agent.sessions["session"]
+        state.revealed_text.append("cotton")
+        state.active_revealed_text.append("cotton")
+        captured_queries: list[str] = []
+        self.agent.retrieve = lambda query, n=500: captured_queries.append(query) or []
+
+        self.agent.respond(
+            "session",
+            "I don't have an additional preference for size.",
+            2,
+            10,
+        )
+
+        self.assertEqual(captured_queries, ["cotton size"])
+        self.assertEqual(state.revealed_text, ["cotton"])
+        self.assertEqual(state.active_revealed_text, ["cotton"])
+
     def test_resetting_same_session_clears_previous_state(self) -> None:
         self.agent.reset("session", {"summary": "old"})
         old_state = self.agent.sessions["session"]
