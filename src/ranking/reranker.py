@@ -21,6 +21,11 @@ class RankingWeights:
     keyword: float = 0.70
     category: float = 0.06
     quality: float = 0.001
+    category_violation: float = 0.50
+    price_violation: float = 0.50
+    other_hard_violation: float = 0.30
+    negative_preference: float = 0.50
+    buying_penalty_multiplier: float = 1.10
     feature_blend: float = 0.60
     cross_encoder_blend: float = 0.40
 
@@ -53,6 +58,8 @@ def _constraint_score(features: ProductFeatures) -> float:
         features.color_match,
         features.size_match,
         features.material_match,
+        features.style_match,
+        features.feature_match,
         features.use_case_match,
         features.price_match,
         features.positive_preference_match,
@@ -97,43 +104,51 @@ class Reranker:
             )
 
             penalty = 0.0
-            penalty += 8.0 if "max_price" in item.hard_violations else 0.0
-            penalty += 8.0 if "category" in item.hard_violations else 0.0
-            penalty += 5.0 * (item.negative_preference_match or 0.0)
+            penalty += self.weights.price_violation if "max_price" in item.hard_violations else 0.0
+            penalty += self.weights.price_violation if "min_price" in item.hard_violations else 0.0
+            penalty += self.weights.category_violation if "category" in item.hard_violations else 0.0
+            penalty += self.weights.negative_preference * (item.negative_preference_match or 0.0)
             for violation in item.hard_violations:
-                if violation not in {"max_price", "category"}:
-                    penalty += 4.0
+                if violation not in {"min_price", "max_price", "category"}:
+                    penalty += self.weights.other_hard_violation
             if scenario == "buying":
-                penalty *= 1.15
+                penalty *= self.weights.buying_penalty_multiplier
 
             feature_score = base - penalty
             scored.append({
                 "product": product,
+                "base_score": base,
                 "feature_score": feature_score,
-                "features": asdict(item),
                 "final_score": feature_score,
+                "_features": item,
+                "_penalty": penalty,
                 "_input_index": index,
             })
 
         scored.sort(key=lambda item: (-item["feature_score"], item["_input_index"]))
-        shortlist = scored[: self.cross_encoder_candidates]
+        shortlist_size = max(top_k, self.cross_encoder_candidates) if self.cross_encoder is not None else top_k
+        shortlist = scored[:shortlist_size]
         if self.cross_encoder is not None and shortlist:
             query = state_to_query(state)
             raw_scores = list(self.cross_encoder.predict([(query, product_text(item["product"])) for item in shortlist]))
             if len(raw_scores) != len(shortlist):
                 raise ValueError("cross-encoder returned a different number of scores than candidate pairs")
             normalized = _minmax([float(score) for score in raw_scores])
-            feature_norm = _minmax([item["feature_score"] for item in shortlist])
+            feature_norm = _minmax([item["base_score"] for item in shortlist])
             for item, feature_value, cross_value in zip(shortlist, feature_norm, normalized):
                 item["cross_encoder_score"] = cross_value
                 item["final_score"] = (
                     self.weights.feature_blend * feature_value
                     + self.weights.cross_encoder_blend * cross_value
+                    - item["_penalty"]
                 )
             shortlist.sort(key=lambda item: (-item["final_score"], item["_input_index"]))
 
         for item in shortlist:
+            item["features"] = asdict(item.pop("_features"))
+            item.pop("base_score", None)
             item.pop("_input_index", None)
+            item.pop("_penalty", None)
         return shortlist[:top_k]
 
 

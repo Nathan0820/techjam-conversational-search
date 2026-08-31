@@ -124,6 +124,18 @@ class OverrideHandlerTest(unittest.TestCase):
         _apply_message(state, "Forget the budget limit")
         self.assertEqual(state.slots["budget"], [])
 
+    def test_replacement_preserves_existing_strength(self) -> None:
+        """Keep a hard slot hard when only its value is replaced."""
+
+        state = SessionState("session")
+        state.set_constraint("color", ["black"], strength="hard")
+
+        _apply_message(state, "Actually white instead")
+
+        self.assertEqual(state.slots["color"], ["white"])
+        self.assertIn("color", state.hard_constraints)
+        self.assertNotIn("color", state.soft_preferences)
+
     def test_targeted_value_removal(self) -> None:
         """Remove only the rejected value when alternatives remain valid."""
 

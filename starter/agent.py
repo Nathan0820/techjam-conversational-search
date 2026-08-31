@@ -9,10 +9,12 @@ from copy import deepcopy
 from pathlib import Path
 
 from dialogue.accumulator import accumulate_information
+from dialogue.constraint_classifier import classify_constraints
 from dialogue.intent_detector import detect_intent
 from dialogue.override_handler import apply_override, resolve_override
 from dialogue.slot_extractor import extract_slots
 from dialogue.state import SessionState
+from src.ranking.features import prepare_product
 from src.ranking.reranker import Reranker, to_evaluator_recommendations
 
 
@@ -99,7 +101,7 @@ class Agent:
             for line in handle:
                 product = json.loads(line)
                 parent_asin = str(product["parent_asin"])
-                self.catalog_by_asin[parent_asin] = product
+                self.catalog_by_asin[parent_asin] = prepare_product(product)
                 batch.append(
                     (
                         parent_asin,
@@ -181,6 +183,7 @@ class Agent:
         ranking_state = deepcopy(state)
         accumulate_information(ranking_state, extraction)
         apply_override(ranking_state, override_resolution)
+        classify_constraints(ranking_state, user_message, extraction)
         ranking_state.intent = detected_intent
         # Build the query from active extracted constraints, including this turn.
         # The copied state has current overrides applied, so retracted phrases are
@@ -207,5 +210,6 @@ class Agent:
         ])
         accumulate_information(state, extraction)
         apply_override(state, override_resolution)
+        classify_constraints(state, user_message, extraction)
         state.intent = detected_intent
         return response

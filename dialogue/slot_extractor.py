@@ -273,6 +273,13 @@ def _extract_catalog_terms(message: str, result: SlotExtraction) -> None:
         if (
             folded in categories
             and folded not in GENERIC_CATEGORIES
+            and not (
+                result.slots["budget"]
+                and re.search(
+                    r"(?i)(?:\$|\b(?:sgd|usd|under|below|over|above|between|budget)\b|\d)",
+                    raw,
+                )
+            )
             and not any(
                 folded == str(value).casefold()
                 for slot in ("material", "color", "style", "feature", "use_case")

@@ -157,6 +157,94 @@ class RankingTest(unittest.TestCase):
         self.assertEqual(record["target_final_rank"], 2)
         self.assertEqual(record["failure_reason"], "target_ranked_below_competitor")
 
+    def test_single_letter_size_requires_a_token_boundary(self) -> None:
+        state = {"hard_constraints": {"size": "M"}}
+        candidates = [
+            product("false-positive", "Premium cotton shirt"),
+            product("target", "Cotton shirt size M"),
+        ]
+
+        ranked = rerank(candidates, state)
+
+        self.assertEqual(ranked[0]["product"]["parent_asin"], "target")
+        self.assertIn("size", ranked[1]["features"]["hard_violations"])
+
+    def test_partial_category_overlap_is_a_hard_violation(self) -> None:
+        state = {"hard_constraints": {"category": "Women Leggings"}}
+        candidates = [
+            product("wrong", "Gold earrings", categories=["Women", "Earrings"]),
+            product("target", "Training leggings", categories=["Women", "Leggings"]),
+        ]
+
+        ranked = rerank(candidates, state)
+
+        self.assertEqual(ranked[0]["product"]["parent_asin"], "target")
+        self.assertIn("category", ranked[1]["features"]["hard_violations"])
+
+    def test_style_and_feature_slots_affect_ranking(self) -> None:
+        state = {
+            "slots": {"style": ["casual"], "feature": ["waterproof"]},
+            "soft_preferences": {"style", "feature"},
+        }
+        candidates = [
+            product("wrong", "Formal wool coat"),
+            product("target", "Casual waterproof coat"),
+        ]
+
+        ranked = rerank(candidates, state)
+
+        self.assertEqual(ranked[0]["product"]["parent_asin"], "target")
+        self.assertEqual(ranked[0]["features"]["style_match"], 1.0)
+        self.assertEqual(ranked[0]["features"]["feature_match"], 1.0)
+
+    def test_minimum_price_and_unknown_price_are_distinguished(self) -> None:
+        state = {
+            "slots": {"budget": [BudgetConstraint(minimum=100)]},
+            "hard_constraints": {"budget"},
+        }
+        candidates = [
+            product("below", "Budget watch", price=50),
+            product("unknown", "Unpriced watch", price=None),
+            product("target", "Premium watch", price=120),
+        ]
+
+        ranked = rerank(candidates, state, top_k=3)
+        by_asin = {item["product"]["parent_asin"]: item for item in ranked}
+
+        self.assertEqual(ranked[0]["product"]["parent_asin"], "target")
+        self.assertIn("min_price", by_asin["below"]["features"]["hard_violations"])
+        self.assertEqual(by_asin["unknown"]["features"]["price_match"], 0.25)
+
+    def test_semantic_blend_cannot_resurrect_hard_violation(self) -> None:
+        class PreferWrong:
+            def predict(self, pairs):
+                return [1.0 if "earrings" in text else 0.0 for _, text in pairs]
+
+        state = {"hard_constraints": {"category": "Leggings"}}
+        candidates = [
+            product("wrong", "Sparkly earrings", categories=["Earrings"]),
+            product("target", "Training leggings", categories=["Leggings"]),
+        ]
+
+        ranked = Reranker(cross_encoder=PreferWrong()).rerank(candidates, state)
+
+        self.assertEqual(ranked[0]["product"]["parent_asin"], "target")
+
+    def test_semantic_query_omits_empty_slot_names(self) -> None:
+        state = SessionState(session_id="session")
+        state.add_slot_values("color", ["black"])
+
+        query = state_to_query(state)
+
+        self.assertIn("black", query)
+        self.assertNotIn("material", query)
+        self.assertNotIn("budget", query)
+
+    def test_top_k_is_not_capped_without_cross_encoder(self) -> None:
+        candidates = [product(str(index), f"Product {index}") for index in range(40)]
+
+        self.assertEqual(len(rerank(candidates, {}, top_k=40)), 40)
+
 
 if __name__ == "__main__":
     unittest.main()
