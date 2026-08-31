@@ -368,7 +368,12 @@ def apply_override(state: SessionState, resolution: OverrideResolution) -> None:
             state.remove_slot_values(slot_name, values)
     for slot_name, values in resolution.replacement_values.items():
         if slot_name not in resolution.clear_slots:
-            state.set_constraint(slot_name, values)
+            strength = (
+                "hard" if slot_name in state.hard_constraints
+                else "soft" if slot_name in state.soft_preferences
+                else None
+            )
+            state.set_constraint(slot_name, values, strength=strength)
     if resolution.remove_active_revealed_text:
         stale_phrases = set(resolution.remove_active_revealed_text)
         state.active_revealed_text = [
