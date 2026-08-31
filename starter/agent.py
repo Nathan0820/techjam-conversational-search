@@ -147,13 +147,23 @@ class Agent:
         extraction = extract_slots(user_message)
         detected_intent = detect_intent(user_message, state, extraction)
         override_resolution = resolve_override(user_message, state, extraction)
-        prior_messages = [
-            entry["content"]
-            for entry in state.message_history
-            if entry["role"] == "user"
-        ]
-        query = " ".join([*prior_messages, user_message])
+        # Step 7 - build the query from the constraint phrases the customer has given,
+        # rather than their raw message text, which drags in conversational filler.
+        # `state` only knows about previous turns at this point, because nothing is
+        # written to it until retrieval has succeeded (see the state updates below and
+        # test_failed_retrieval_does_not_commit_turn_or_history). So this turn's phrases
+        # come from the local `extraction` instead. Using state alone would leave the
+        # query a turn behind and costs ~0.016 TechnicalScore; see E3 in decisions.md.
+        # `active_revealed_text` excludes phrases the customer has retracted, which
+        # `revealed_text` would still contain.
+        phrases = [*state.active_revealed_text, *extraction.revealed_text]
+        # Extraction occasionally finds nothing to work with, e.g. an opening
+        # "I'm looking for Men Active, but I'm still exploring." Falling back to the raw
+        # message keeps the turn productive instead of returning no recommendations.
+        query = " ".join(phrases) if phrases else user_message
 
+        # Step 8 - retrieve. Reranking (role C) will eventually take a deeper pool from
+        # retrieve() and pick the final top_k; for now the pool is the answer.
         candidates = self.retrieve(query, n=top_k)
         recommendations = [
             {"parent_asin": parent_asin}
