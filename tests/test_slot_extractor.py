@@ -195,6 +195,56 @@ class SlotExtractorTest(unittest.TestCase):
             with self.subTest(requirement=requirement):
                 self.assertTrue(extract_slots(requirement).revealed_text)
 
+    def test_no_preference_replies_are_not_retrieval_evidence(self) -> None:
+        """Keep simulator and natural no-preference replies out of queries."""
+
+        for message in (
+            "I don't have an additional preference for size.",
+            "I don't have a preference for feature; please use your judgment.",
+            "I have no preference about the color.",
+            "No additional preference on material.",
+            "Those options are not quite right yet. Ask me about one specific attribute.",
+        ):
+            with self.subTest(message=message):
+                result = extract_slots(message)
+                self.assertEqual(result.revealed_text, [])
+                self.assertTrue(all(not values for values in result.slots.values()))
+        self.assertEqual(
+            extract_slots(
+                "I don't have an additional preference for size."
+            ).retrieval_hints,
+            ["size"],
+        )
+        self.assertEqual(
+            extract_slots(
+                "Those options are not quite right yet. "
+                "Ask me about one specific attribute."
+            ).retrieval_hints,
+            [],
+        )
+        self.assertEqual(
+            extract_slots(
+                "I don't have a preference for feature; "
+                "please use your judgment."
+            ).retrieval_hints,
+            [],
+        )
+
+    def test_no_preference_clause_preserves_mixed_positive_evidence(self) -> None:
+        """Remove only the dialogue clause when the user also adds requirements."""
+
+        result = extract_slots(
+            "I don't have a preference for brand, but I need black cotton."
+        )
+
+        self.assertEqual(result.slots["color"], ["black"])
+        self.assertEqual(result.slots["material"], ["cotton"])
+        self.assertTrue(all(
+            "preference for brand" not in phrase.casefold()
+            for phrase in result.revealed_text
+        ))
+        self.assertEqual(result.retrieval_hints, [])
+
     def test_dimension_phrases_are_not_approximate_budgets(self) -> None:
         """Require monetary context before constructing approximate budgets."""
 
