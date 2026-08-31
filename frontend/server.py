@@ -132,12 +132,29 @@ class App:
             parent_asin = recommendation["parent_asin"]
             product = self.catalog_by_asin.get(parent_asin, {})
             categories = product.get("categories") or []
+            raw_features = product.get("features") or []
+            feature_values = raw_features if isinstance(raw_features, list) else [raw_features]
+            features = [str(value).strip() for value in feature_values if str(value).strip()]
+            raw_details = product.get("details") or {}
+            details = (
+                [
+                    f"{key}: {value}"
+                    for key, value in raw_details.items()
+                    if value not in (None, "", [])
+                ]
+                if isinstance(raw_details, dict)
+                else [str(value).strip() for value in (
+                    raw_details if isinstance(raw_details, list) else [raw_details]
+                ) if str(value).strip()]
+            )
+            highlights = [*features[:2], *details[:1]][:3]
             recommendations.append({
                 **recommendation,
                 "title": product.get("title") or "Untitled product",
                 "store": product.get("store") or "Unknown store",
                 "category": categories[-1] if categories else "Uncategorized",
                 "price": product.get("price"),
+                "highlights": highlights,
             })
         active_slots = {
             name: [str(value) for value in values]

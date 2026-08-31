@@ -3,73 +3,154 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Findly Lab</title>
+  <meta name="theme-color" content="#09110f">
+  <meta name="description" content="Findly turns a conversation into relevant product recommendations.">
+  <title>Findly — Conversational product discovery</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+
   <main class="shell">
-    <header>
-      <div>
-        <p class="eyebrow">TechJam test console</p>
-        <h1>Findly <span>Lab</span></h1>
-        <p class="subtitle">Try the conversational product-search pipeline.</p>
+    <header class="hero">
+      <div class="brand-block">
+        <div class="brand-lockup">
+          <div class="brand-mark" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <span class="wordmark">findly</span>
+          <span class="lab-badge">LAB</span>
+        </div>
+        <p class="eyebrow">Conversational product discovery</p>
+        <h1>Every clue gets you <span>closer.</span></h1>
+        <p class="subtitle">
+          Tell Findly what matters. It asks, remembers, and reshapes the search when you
+          change your mind.
+        </p>
       </div>
-      <button id="new-session" class="secondary">New session</button>
+
+      <div class="hero-actions">
+        <div class="system-state" title="Runs locally with no external API calls">
+          <span class="live-dot" aria-hidden="true"></span>
+          <span>Local engine</span>
+          <strong>50k products</strong>
+        </div>
+        <button id="new-session" class="secondary new-session" type="button">
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M10 4v12M4 10h12"/>
+          </svg>
+          <span class="button-label">New session</span>
+        </button>
+      </div>
     </header>
 
     <section class="metrics" aria-label="Latest evaluation performance">
       <div class="section-heading">
         <div>
-          <p class="eyebrow">Latest public-set run</p>
-          <h2>Performance</h2>
+          <p class="eyebrow">Proof, not promises</p>
+          <h2>Public-set performance</h2>
         </div>
         <span id="sample-count" class="pill">Loading…</span>
       </div>
-      <div id="metric-grid" class="metric-grid"></div>
+      <div id="metric-grid" class="metric-grid" aria-live="polite"></div>
     </section>
 
     <div class="workspace">
       <section class="chat-panel">
-        <div class="section-heading">
+        <div class="section-heading conversation-heading">
           <div>
-            <p class="eyebrow">Live pipeline</p>
-            <h2>Conversation</h2>
+            <p class="eyebrow">Live search session</p>
+            <h2>Talk it through</h2>
           </div>
-          <span id="turn-label" class="pill">Turn 1 / 10</span>
+          <div class="turn-progress" aria-label="Conversation progress">
+            <span id="turn-label">Turn 1 / 10</span>
+            <div class="turn-track" aria-hidden="true">
+              <span id="turn-progress-bar"></span>
+            </div>
+          </div>
         </div>
 
         <div id="messages" class="messages" aria-live="polite">
           <div class="message assistant">
-            Tell me what you are shopping for. Try “I want black Nike boots under SGD 100.”
+            <span class="message-author">Findly</span>
+            Tell me what you are shopping for. You can be specific, or we can narrow it
+            down together.
+          </div>
+        </div>
+
+        <div class="prompt-shelf" aria-label="Example prompts">
+          <span>Start with an idea</span>
+          <div class="prompt-list">
+            <button type="button" class="prompt-chip" data-prompt="I want black Nike boots under SGD 100">
+              Black Nike boots
+            </button>
+            <button type="button" class="prompt-chip" data-prompt="Help me explore a comfortable outfit for hot weather">
+              Explore summer wear
+            </button>
+            <button type="button" class="prompt-chip" data-prompt="I need a lightweight waterproof jacket for hiking">
+              Hiking jacket
+            </button>
           </div>
         </div>
 
         <form id="chat-form">
-          <label for="message-input">Customer message</label>
+          <label for="message-input">What are you looking for?</label>
           <div class="composer">
-            <input id="message-input" autocomplete="off" placeholder="Describe what you need…" required>
-            <button id="send-button" type="submit">Send</button>
+            <input id="message-input" autocomplete="off" placeholder="Describe it naturally…" required>
+            <button id="send-button" type="submit" aria-label="Send message">
+              <span>Send</span>
+              <svg viewBox="0 0 20 20" aria-hidden="true">
+                <path d="m5 10 9-6-3 6 3 6-9-6Zm6 0H3"/>
+              </svg>
+            </button>
           </div>
-          <p id="status" class="status">Starting a session…</p>
+          <p id="status" class="status" data-status="working">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span class="status-copy">Starting a session…</span>
+          </p>
         </form>
       </section>
 
       <aside>
         <section class="state-panel">
-          <p class="eyebrow">Member B state</p>
-          <h2>What the agent knows</h2>
-          <div id="state-view" class="empty">No preferences extracted yet.</div>
+          <div class="panel-icon state-icon" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <p class="eyebrow">Living preference map</p>
+          <div class="panel-title-row">
+            <h2>What Findly knows</h2>
+            <span id="signal-count" class="mini-count">0 signals</span>
+          </div>
+          <div id="state-view" class="empty-state">
+            <strong>Listening for clues</strong>
+            <span>Your intent and preferences will appear here as you chat.</span>
+          </div>
         </section>
 
         <section class="results-panel">
+          <div class="panel-icon result-icon" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
           <p class="eyebrow">Search output</p>
-          <h2>Top recommendations</h2>
+          <div class="panel-title-row">
+            <h2>Best matches</h2>
+            <span id="result-count" class="mini-count">Waiting</span>
+          </div>
           <ol id="recommendations" class="recommendations">
-            <li class="empty">Send a message to rank products.</li>
+            <li class="empty-state compact">
+              <strong>No search yet</strong>
+              <span>Recommendations will respond to every new clue.</span>
+            </li>
           </ol>
         </section>
       </aside>
     </div>
+
+    <footer>
+      <span>Findly · TechJam 2026</span>
+      <span>Private by design · Standard library only · No external APIs</span>
+    </footer>
   </main>
   <script src="/app.js"></script>
 </body>

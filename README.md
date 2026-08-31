@@ -244,11 +244,11 @@ The page contains three useful views:
 - **Top recommendations** shows the ten products returned for the current turn, including
   their scores and catalog identifiers.
 
-On the initial page load, the performance matrix reads the existing `results.json`; it
-does not silently rerun the evaluator. Clicking **New session** clears the conversation,
-starts at turn 1, runs the current agent on all 200 public sessions, writes a fresh
-`results.json`, and updates the matrix when evaluation finishes. This takes about one
-minute. The live conversation remains usable after the refresh.
+On the initial page load or browser reload, Findly runs the current agent on all 200
+public sessions, writes a fresh `results.json`, and updates the performance matrix. This
+takes about one minute, and the conversation becomes available when evaluation finishes.
+Clicking **New session** only clears the conversation and starts again at turn 1; it keeps
+the latest performance matrix and does not rerun the evaluator.
 
 For a quick manual test, try:
 
@@ -260,7 +260,7 @@ For a quick manual test, try:
 4. Send `Actually, ignore Nike; show me Adidas instead.` and confirm that the active brand
    changes rather than accumulating both brands.
 5. Click **New session** and confirm that the conversation state and recommendations are
-   cleared before the performance matrix refreshes.
+   cleared while the performance matrix remains unchanged.
 
 ### Troubleshooting
 
@@ -270,9 +270,8 @@ For a quick manual test, try:
   commands with a Python 3.10+ executable.
 - **Port 8000 is already in use** — stop the previous frontend process before starting a
   new one.
-- **The matrix shows old values** — click **New session** and wait for the 200-session
-  evaluation to finish. The matrix changes only after the new `results.json` is
-  published.
+- **The matrix shows old values** — reload the page and wait for the 200-session
+  evaluation to finish. **New session** intentionally does not rerun evaluation.
 
 ---
 
