@@ -1,3 +1,15 @@
+"""Order retrieved candidates against the current conversation state.
+
+Retrieval decides which products compete; this decides the order they are shown in.
+Each candidate is scored on how well it satisfies what the customer has said, with
+the lexical retrieval score kept as the dominant term so a single noisy extraction
+cannot outrank the evidence that found the product in the first place.
+
+Products that violate a stated hard requirement are penalised rather than removed,
+because extraction is imperfect and a wrongly-parsed constraint should cost a
+product rank, not eliminate it.
+"""
+
 from __future__ import annotations
 
 import math
@@ -9,11 +21,21 @@ from .features import ProductFeatures, extract_features, product_text, state_val
 
 
 class CrossEncoder(Protocol):
-    def predict(self, pairs: Sequence[tuple[str, str]]) -> Sequence[float]: ...
+    """Optional semantic scorer for (query, product text) pairs.
+
+    Supplying one enables a second pass over the shortlist. The agent ships without
+    one, so the feature score alone decides the order.
+    """
+
+    def predict(self, pairs: Sequence[tuple[str, str]]) -> Sequence[float]:
+        """Return one score per pair, in the order the pairs were given."""
+        ...
 
 
 @dataclass(frozen=True)
 class RankingWeights:
+    """Relative influence of each ranking signal, and the cost of each violation."""
+
     # Retrieval remains the strongest signal. Structured state refines its
     # ordering without allowing a noisy extracted match to overwhelm BM25.
     constraint: float = 0.24
@@ -36,6 +58,14 @@ _CONFIRMED_VIOLATIONS = {"category", *_PRICE_VIOLATIONS}
 
 
 def _minmax(values: list[float | None], *, log_scale: bool = False) -> list[float]:
+    """Scale values into [0, 1] so signals on different scales can be summed.
+
+    Missing and non-finite entries become 0.0, and a set of identical values becomes
+    0.5 throughout rather than collapsing to zero. `log_scale` compresses long-tailed
+    quantities such as review counts, where the difference between 10 and 100 reviews
+    matters more than between 10,000 and 10,090.
+    """
+
     present = [value for value in values if value is not None and math.isfinite(value)]
     if not present:
         return [0.0] * len(values)
@@ -53,11 +83,19 @@ def _minmax(values: list[float | None], *, log_scale: bool = False) -> list[floa
 
 
 def _mean_known(values: Sequence[float | None], default: float = 0.5) -> float:
+    """Average the values that are known, ignoring absent ones.
+
+    A constraint the customer never mentioned should neither help nor hurt a product,
+    so it is skipped instead of counted as zero.
+    """
+
     known = [value for value in values if value is not None]
     return sum(known) / len(known) if known else default
 
 
 def _constraint_score(features: ProductFeatures) -> float:
+    """Combine every per-attribute match into one satisfaction score in [0, 1]."""
+
     return _mean_known([
         features.brand_match,
         features.color_match,
@@ -92,17 +130,43 @@ def _confident_bm25_leader(
 
 
 class Reranker:
+    """Scores and orders candidates for one turn.
+
+    Holds no per-session state; everything it needs arrives with each call.
+    """
+
     def __init__(
         self,
         weights: RankingWeights | None = None,
         cross_encoder: CrossEncoder | None = None,
         cross_encoder_candidates: int = 30,
     ) -> None:
+        """Configure the signal weights and the optional semantic second pass.
+
+        `cross_encoder_candidates` sets how deep the shortlist goes before that
+        second pass, and has no effect without a cross-encoder.
+        """
+
         self.weights = weights or RankingWeights()
         self.cross_encoder = cross_encoder
         self.cross_encoder_candidates = cross_encoder_candidates
 
     def rerank(self, cands: Sequence[Mapping[str, Any]], state: object, top_k: int = 10) -> list[dict[str, Any]]:
+        """Return the best `top_k` candidates, best first.
+
+        Each candidate is scored as a weighted blend of lexical retrieval, constraint
+        satisfaction, semantic similarity, category match and review quality, minus
+        penalties for violating anything the customer stated as a requirement. Buying
+        sessions weight those penalties more heavily than browsing ones.
+
+        A candidate that leads on retrieval score by a clear margin is held at the top
+        unless it confirmedly violates a hard constraint, so an unambiguous lexical
+        match is not displaced by a marginal feature difference.
+
+        Returns dicts carrying the product, its final score and its extracted features;
+        [] for an empty candidate list or a non-positive `top_k`.
+        """
+
         if top_k <= 0 or not cands:
             return []
         features = [extract_features(product, state) for product in cands]
@@ -195,10 +259,18 @@ class Reranker:
 
 
 def rerank(cands: Sequence[Mapping[str, Any]], state: object, top_k: int = 10) -> list[dict[str, Any]]:
+    """Rank with default weights and no cross-encoder, for callers holding no Reranker."""
+
     return Reranker().rerank(cands, state, top_k)
 
 
 def to_evaluator_recommendations(scored: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Reduce ranked results to the {parent_asin, score} shape the evaluator scores.
+
+    Entries without a resolvable product id are dropped rather than emitted blank,
+    since the evaluator discards ids outside the catalog anyway.
+    """
+
     recommendations = []
     for item in scored:
         product = item.get("product", {})

@@ -1,3 +1,16 @@
+"""Turn one customer message into structured constraints and exact wording.
+
+Produces three things from a message: normalised slot values for reasoning about,
+the customer's exact phrases for retrieval to match against, and one-turn retrieval
+hints. The exact wording is kept deliberately: the catalog is the text we search, so
+rewriting a phrase before searching would discard the very overlap that finds the
+product.
+
+Extraction is deterministic and rule-based. It recognises a fixed vocabulary of
+materials, colours, sizes, styles, features and use cases, plus brand and category
+names read from the catalog itself.
+"""
+
 from __future__ import annotations
 
 import json
@@ -11,6 +24,8 @@ from .types import BudgetConstraint, Number, SlotValue
 
 
 def _empty_extracted_slots() -> dict[str, list[SlotValue]]:
+    """Return an empty value list for every supported slot."""
+
     return {name: [] for name in SUPPORTED_SLOTS}
 
 
@@ -148,6 +163,12 @@ def _catalog_vocabulary() -> tuple[dict[str, str], dict[str, str]]:
 
 
 def _ngrams(message: str, maximum: int = 5) -> list[tuple[str, str]]:
+    """Yield (casefolded, original) word runs, longest first.
+
+    Longest first so that matching prefers "running shoes" over "shoes" when both
+    appear in the catalog vocabulary.
+    """
+
     tokens = list(TOKEN_RE.finditer(message))
     result: list[tuple[str, str]] = []
     for length in range(min(maximum, len(tokens)), 0, -1):
@@ -186,12 +207,20 @@ def _retrieval_evidence_text(message: str) -> tuple[str, list[str]]:
 
 
 def _add_value(values: list[SlotValue], value: SlotValue) -> None:
+    """Append a slot value unless an equal one is already present, ignoring case."""
+
     key = value.casefold() if isinstance(value, str) else value
     if all((item.casefold() if isinstance(item, str) else item) != key for item in values):
         values.append(value)
 
 
 def _add_raw(result: SlotExtraction, raw: str) -> None:
+    """Record a phrase verbatim, skipping blanks and anything already covered.
+
+    A phrase contained within one already recorded is dropped, so "leather" does not
+    accumulate alongside "100% Leather" and inflate that evidence in the query.
+    """
+
     raw = raw.strip()
     if not raw:
         return
@@ -202,6 +231,12 @@ def _add_raw(result: SlotExtraction, raw: str) -> None:
 
 
 def _extract_explicit_reveals(message: str, result: SlotExtraction) -> None:
+    """Capture values stated after an explicit lead-in, split on semicolons.
+
+    Records only what follows the lead-in, never the framing itself: the framing
+    words are rare in a product catalog and would otherwise dominate BM25 scoring.
+    """
+
     patterns = (
         r"(?i)key requirement is:\s*(.+?)(?=\s*$)",
         r"(?i)what matters is:\s*(.+?)(?=\s*$)",
@@ -262,6 +297,12 @@ def _extract_descriptive_reveals(message: str, result: SlotExtraction) -> None:
 
 
 def _extract_terms(message: str, result: SlotExtraction, slot: str, terms: tuple[str, ...]) -> None:
+    """Find known vocabulary for one slot, preferring longer, non-overlapping matches.
+
+    Matching is whole-word, so "small" is not found inside "smaller". Colour spellings
+    are normalised to one form.
+    """
+
     candidates: list[tuple[int, int, str, str]] = []
     for term in terms:
         for match in re.finditer(rf"(?i)(?<!\w){re.escape(term)}(?!\w)", message):
@@ -277,11 +318,15 @@ def _extract_terms(message: str, result: SlotExtraction, slot: str, terms: tuple
 
 
 def _number(value: str) -> Number:
+    """Parse a numeric string, returning an int when the value is whole."""
+
     parsed = float(value.replace(",", ""))
     return int(parsed) if parsed.is_integer() else parsed
 
 
 def _currency(raw: str) -> str | None:
+    """Identify the currency mentioned, or None. Amounts are never converted."""
+
     if re.search(r"(?i)\bSGD\b", raw):
         return "SGD"
     if re.search(r"(?i)\bUSD\b", raw):
@@ -290,6 +335,12 @@ def _currency(raw: str) -> str | None:
 
 
 def _extract_budget(message: str, result: SlotExtraction) -> None:
+    """Extract a budget as a bound, a range, or an approximate figure.
+
+    "Around $50" is recorded as approximate, which downstream ranking treats as a
+    preference to score against rather than a limit to enforce.
+    """
+
     amount = r"(?:SGD|USD|\$)?\s*(\d+(?:,\d{3})*(?:\.\d+)?)"
     patterns = (
         (rf"(?i)\b(?:between)\s+{amount}\s+(?:and)\s+{amount}", "range"),
@@ -336,6 +387,8 @@ def _extract_budget(message: str, result: SlotExtraction) -> None:
 
 
 def _extract_sizes(message: str, result: SlotExtraction) -> None:
+    """Extract letter and numeric sizes, either labelled or standing alone."""
+
     patterns = (
         r"(?i)\b(?:size|shoe size)\s*[:#-]?\s*(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|\d+(?:\.5)?)\b",
         r"(?<![A-Za-z0-9])((?:[2-6]X)|XXXL|XXL|XL|XS|XXS|XXXS)(?![A-Za-z0-9])",
@@ -413,6 +466,13 @@ def _category_has_context(message: str, start: int, end: int) -> bool:
 
 
 def _extract_catalog_terms(message: str, result: SlotExtraction) -> None:
+    """Match brand and category names drawn from the catalog's own vocabulary.
+
+    Sourcing these from the catalog rather than a hand-written list means the
+    extractor recognises exactly the brands and categories that can actually be
+    retrieved. Overlapping matches are resolved in favour of the longer phrase.
+    """
+
     brands, categories = _catalog_vocabulary()
     occupied: list[tuple[int, int]] = []
     for folded, raw in _ngrams(message):

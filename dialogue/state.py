@@ -1,3 +1,12 @@
+"""The conversation state every pipeline stage reads and writes.
+
+One object per session, carrying what the customer has told us and how it should be
+used. Two representations of the same information are kept on purpose: `slots` holds
+normalised values for reasoning, while `revealed_text` holds their exact wording,
+because retrieval matches against catalog text and normalising first would discard
+the match.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -20,6 +29,8 @@ SUPPORTED_SLOTS = (
 
 
 def _empty_slots() -> dict[str, list[SlotValue]]:
+    """Return an empty value list for every supported slot."""
+
     return {name: [] for name in SUPPORTED_SLOTS}
 
 
@@ -120,5 +131,11 @@ class SessionState:
 
     @staticmethod
     def _validate_slot_name(slot_name: str) -> None:
+        """Raise if the slot name is not one this state supports.
+
+        Fails loudly rather than creating an unexpected key, so a typo surfaces in
+        tests instead of quietly producing a slot nothing downstream reads.
+        """
+
         if slot_name not in SUPPORTED_SLOTS:
             raise ValueError(f"unsupported slot name: {slot_name!r}")
