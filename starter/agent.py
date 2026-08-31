@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 import sqlite3
@@ -24,8 +25,9 @@ from dialogue.intent_detector import detect_intent
 from dialogue.override_handler import apply_override, resolve_override
 from dialogue.slot_extractor import extract_slots
 from dialogue.state import SessionState
+from retrieval.lsa import build_index, flatten_documents
 from src.ranking.features import prepare_product
-from src.ranking.reranker import Reranker, to_evaluator_recommendations
+from src.ranking.reranker import RankingWeights, Reranker, to_evaluator_recommendations
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
@@ -78,6 +80,10 @@ MAX_QUERY_TERMS = 40
 # recall@500 is 1.000 on the public dev set, so 500 loses nothing.
 DEFAULT_CANDIDATES = 500
 
+# Weight the reranker gives the latent-semantic score. C's default is 0.0 because
+# nothing produced that signal until now; see E9 in decisions.md for the sweep.
+SEMANTIC_WEIGHT = 0.0
+
 
 class Agent:
     """Editable weak baseline: stateless BM25 retrieval with no LLM dependency."""
@@ -89,7 +95,12 @@ class Agent:
         self.connection = sqlite3.connect(":memory:")
         self.sessions: dict[str, SessionState] = {}
         self.catalog_by_asin: dict[str, dict] = {}
-        self.reranker = Reranker()
+        self.reranker = Reranker(
+            weights=dataclasses.replace(RankingWeights(), semantic=SEMANTIC_WEIGHT)
+        )
+        # Populated by _build_index; stays None if the decomposition cannot be built,
+        # in which case retrieval runs lexical-only exactly as it did before.
+        self.semantic_index = None
         self._build_index()
 
     def _build_index(self) -> None:
@@ -102,10 +113,14 @@ class Agent:
             "tokenize='unicode61 remove_diacritics 2')"
         )
         batch: list[tuple[str, str, str, str, str, str, str]] = []
+        raw_products: list[dict] = []
         with self.catalog_path.open(encoding="utf-8") as handle:
             for line in handle:
                 product = json.loads(line)
                 parent_asin = str(product["parent_asin"])
+                # Keep the untouched record for the decomposition; prepare_product()
+                # reshapes fields for ranking and would change the text being indexed.
+                raw_products.append(product)
                 self.catalog_by_asin[parent_asin] = prepare_product(product)
                 batch.append(
                     (
@@ -124,6 +139,9 @@ class Agent:
         if batch:
             cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
         self.connection.commit()
+        # Second retrieval route. build_index returns None rather than raising, so a
+        # failure here costs the semantic signal and nothing else.
+        self.semantic_index = build_index(flatten_documents(raw_products))
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         """Replace a session with fresh state and a copied user profile."""
@@ -155,8 +173,16 @@ class Agent:
     def ranking_candidates(
         self,
         retrieved: list[tuple[str, float]],
+        query: str = "",
     ) -> list[dict]:
-        """Hydrate retrieval IDs with catalog metadata for downstream ranking."""
+        """Hydrate retrieval IDs with catalog metadata for downstream ranking.
+
+        Also attaches `dense_score`, the latent-semantic similarity between the query
+        and each candidate. The two routes are fused at the score level rather than the
+        candidate level: lexical recall@500 is already 1.000 (E2), so a second candidate
+        source could only ever contribute products that are not the target. Lexical
+        retrieval decides who competes; the semantic signal helps decide their order.
+        """
 
         candidates = []
         for parent_asin, score in retrieved:
@@ -168,6 +194,14 @@ class Agent:
                 "parent_asin": parent_asin,
                 "bm25_score": score,
             })
+        if self.semantic_index is not None and query and candidates:
+            similarities = self.semantic_index.score(
+                query, [candidate["parent_asin"] for candidate in candidates]
+            )
+            for candidate in candidates:
+                similarity = similarities.get(candidate["parent_asin"])
+                if similarity is not None:
+                    candidate["dense_score"] = similarity
         return candidates
 
     def respond(
@@ -211,7 +245,7 @@ class Agent:
         # Step 8 - retrieve a recall-oriented pool, hydrate its catalog metadata,
         # and let ranking choose the final evaluator-facing top_k.
         retrieved = self.retrieve(query)
-        candidates = self.ranking_candidates(retrieved)
+        candidates = self.ranking_candidates(retrieved, query=query)
         ranked = self.reranker.rerank(candidates, ranking_state, top_k=top_k)
         recommendations = to_evaluator_recommendations(ranked)
         response = {
