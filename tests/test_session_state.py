@@ -221,8 +221,20 @@ class AgentSessionLifecycleTest(unittest.TestCase):
         state = self.agent.sessions["session"]
         self.assertEqual(state.slots["color"], ["black"])
         self.assertEqual(state.slots["material"], ["cotton"])
+        self.assertEqual(state.hard_constraints, {"budget", "color", "material"})
+        self.assertEqual(state.soft_preferences, set())
         self.assertEqual(state.revealed_text[0], "black cotton under $30")
         self.assertEqual(state.active_revealed_text[0], "black cotton under $30")
+
+    def test_if_possible_language_creates_soft_preference(self) -> None:
+        self.agent.reset("session", {})
+
+        self.agent.respond("session", "Waterproof if possible", 1, 10)
+
+        state = self.agent.sessions["session"]
+        self.assertEqual(state.slots["feature"], ["waterproof"])
+        self.assertIn("feature", state.soft_preferences)
+        self.assertNotIn("feature", state.hard_constraints)
 
     def test_resetting_same_session_clears_previous_state(self) -> None:
         self.agent.reset("session", {"summary": "old"})

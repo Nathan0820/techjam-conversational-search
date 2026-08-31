@@ -124,6 +124,18 @@ class OverrideHandlerTest(unittest.TestCase):
         _apply_message(state, "Forget the budget limit")
         self.assertEqual(state.slots["budget"], [])
 
+    def test_replacement_preserves_existing_strength(self) -> None:
+        """Keep a hard slot hard when only its value is replaced."""
+
+        state = SessionState("session")
+        state.set_constraint("color", ["black"], strength="hard")
+
+        _apply_message(state, "Actually white instead")
+
+        self.assertEqual(state.slots["color"], ["white"])
+        self.assertIn("color", state.hard_constraints)
+        self.assertNotIn("color", state.soft_preferences)
+
     def test_targeted_value_removal(self) -> None:
         """Remove only the rejected value when alternatives remain valid."""
 
@@ -473,6 +485,34 @@ class OverrideAgentIntegrationTest(unittest.TestCase):
         state = self.agent.sessions["session"]
         self.assertEqual(state.intent, "buying")
         self.assertEqual(state.slots["color"], ["white"])
+
+    def test_override_keeps_old_phrase_for_retrieval_but_not_reranking(self) -> None:
+        """Separate recall-oriented query text from corrected ranking state."""
+
+        class CapturingReranker:
+            def __init__(self) -> None:
+                self.active_phrases: list[str] = []
+
+            def rerank(self, candidates, state, top_k=10):
+                self.active_phrases = list(state.active_revealed_text)
+                return []
+
+        self.agent.reset("session", {})
+        state = self.agent.sessions["session"]
+        state.add_slot_values("color", ["black"])
+        state.revealed_text.append("black")
+        state.active_revealed_text.append("black")
+        captured_query: list[str] = []
+        self.agent.retrieve = lambda query, n=500: captured_query.append(query) or []
+        reranker = CapturingReranker()
+        self.agent.reranker = reranker
+
+        self.agent.respond("session", "Actually white instead", 2, 10)
+
+        self.assertIn("black", captured_query[0])
+        self.assertIn("white", captured_query[0])
+        self.assertNotIn("black", reranker.active_phrases)
+        self.assertIn("white", reranker.active_phrases)
 
     def test_failed_response_does_not_commit_override(self) -> None:
         """Leave every state field unchanged when retrieval fails."""

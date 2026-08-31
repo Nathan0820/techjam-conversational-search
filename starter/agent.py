@@ -24,6 +24,8 @@ from dialogue.intent_detector import detect_intent
 from dialogue.override_handler import apply_override, resolve_override
 from dialogue.slot_extractor import extract_slots
 from dialogue.state import SessionState
+from src.ranking.features import prepare_product
+from src.ranking.reranker import Reranker, to_evaluator_recommendations
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
@@ -86,6 +88,8 @@ class Agent:
         self.catalog_path = Path(catalog_path)
         self.connection = sqlite3.connect(":memory:")
         self.sessions: dict[str, SessionState] = {}
+        self.catalog_by_asin: dict[str, dict] = {}
+        self.reranker = Reranker()
         self._build_index()
 
     def _build_index(self) -> None:
@@ -101,9 +105,11 @@ class Agent:
         with self.catalog_path.open(encoding="utf-8") as handle:
             for line in handle:
                 product = json.loads(line)
+                parent_asin = str(product["parent_asin"])
+                self.catalog_by_asin[parent_asin] = prepare_product(product)
                 batch.append(
                     (
-                        str(product["parent_asin"]),
+                        parent_asin,
                         _text(product.get("title")),
                         _text(product.get("categories")),
                         _text(product.get("features")),
@@ -146,6 +152,24 @@ class Agent:
         ).fetchall()
         return [(str(row[0]), float(row[1])) for row in rows]
 
+    def ranking_candidates(
+        self,
+        retrieved: list[tuple[str, float]],
+    ) -> list[dict]:
+        """Hydrate retrieval IDs with catalog metadata for downstream ranking."""
+
+        candidates = []
+        for parent_asin, score in retrieved:
+            product = self.catalog_by_asin.get(parent_asin)
+            if product is None:
+                continue
+            candidates.append({
+                **product,
+                "parent_asin": parent_asin,
+                "bm25_score": score,
+            })
+        return candidates
+
     def respond(
         self,
         session_id: str,
@@ -171,33 +195,25 @@ class Agent:
             override_resolution=override_resolution,
             previous_ask_yield=previous_ask_yield,
         )
-        response_ask_attribute = select_response_ask_attribute(
-            state,
-            clarification,
-            previous_ask_yield=previous_ask_yield,
-        )
-        # Step 7 - build the query from the constraint phrases the customer has given,
-        # rather than their raw message text, which drags in conversational filler.
-        # `state` only knows about previous turns at this point, because nothing is
-        # written to it until retrieval has succeeded (see the state updates below and
-        # test_failed_retrieval_does_not_commit_turn_or_history). So this turn's phrases
-        # come from the local `extraction` instead. Using state alone would leave the
-        # query a turn behind and costs ~0.016 TechnicalScore; see E3 in decisions.md.
-        # `active_revealed_text` excludes phrases the customer has retracted, which
-        # `revealed_text` would still contain.
+        response_ask_attribute = select_response_ask_attribute(state, clarification, previous_ask_yield=previous_ask_yield,)
+        ranking_state = deepcopy(state)
+        accumulate_information(ranking_state, extraction)
+        apply_override(ranking_state, override_resolution)
+        apply_constraint_classification(ranking_state, classification)
+        ranking_state.intent = detected_intent
+        # Retrieval keeps the prior active phrases plus this turn's extracted text.
+        # Reranking still uses the override-applied copy above, so stale constraints
+        # cannot affect hard/soft matching even though they remain recall evidence
+        # for the retrieval step during the correction turn.
         phrases = [*state.active_revealed_text, *extraction.revealed_text]
-        # Extraction occasionally finds nothing to work with, e.g. an opening
-        # "I'm looking for Men Active, but I'm still exploring." Falling back to the raw
-        # message keeps the turn productive instead of returning no recommendations.
         query = " ".join(phrases) if phrases else user_message
 
-        # Step 8 - retrieve. Reranking (role C) will eventually take a deeper pool from
-        # retrieve() and pick the final top_k; for now the pool is the answer.
-        candidates = self.retrieve(query, n=top_k)
-        recommendations = [
-            {"parent_asin": parent_asin}
-            for parent_asin, _ in candidates
-        ]
+        # Step 8 - retrieve a recall-oriented pool, hydrate its catalog metadata,
+        # and let ranking choose the final evaluator-facing top_k.
+        retrieved = self.retrieve(query)
+        candidates = self.ranking_candidates(retrieved)
+        ranked = self.reranker.rerank(candidates, ranking_state, top_k=top_k)
+        recommendations = to_evaluator_recommendations(ranked)
         response = {
             "message": clarification_message(
                 clarification,
