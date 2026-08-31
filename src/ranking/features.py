@@ -1,3 +1,15 @@
+"""Turn one product and the conversation state into comparable ranking signals.
+
+Every signal is either a score in [0, 1] or None. None means "the customer never
+mentioned this", which is different from zero, and the reranker skips it rather than
+counting it against the product. That distinction matters because a customer who has
+said nothing about colour should not penalise every product for failing to match a
+colour they never asked for.
+
+Products are read defensively. Catalog records vary in which fields they populate,
+and callers may pass either the current SessionState or a plain mapping.
+"""
+
 from __future__ import annotations
 
 import math
@@ -23,12 +35,16 @@ PREPARED_BRAND_KEY = "_ranking_brand_text"
 
 
 def state_value(state: object, key: str, default: Any = None) -> Any:
+    """Read `key` from either a mapping or an object, so both state shapes work."""
+
     if isinstance(state, Mapping):
         return state.get(key, default)
     return getattr(state, key, default)
 
 
 def flatten(value: object) -> list[str]:
+    """Reduce a nested catalog or state value to a flat list of strings."""
+
     if value is None:
         return []
     if isinstance(value, Mapping):
@@ -62,10 +78,18 @@ def flatten_values(value: object) -> list[str]:
 
 
 def normalize_text(value: object) -> str:
+    """Lowercase, strip punctuation, and join to a single space-separated string."""
+
     return " ".join(TOKEN_RE.findall(" ".join(flatten(value)).lower()))
 
 
 def product_text(product: Mapping[str, Any]) -> str:
+    """Return the product's searchable text, reusing a prepared value when present.
+
+    prepare_product() caches this at catalog load time; recomputing it per candidate
+    per turn would repeat the same normalisation thousands of times per session.
+    """
+
     prepared = product.get(PREPARED_TEXT_KEY)
     if isinstance(prepared, str):
         return prepared
@@ -91,6 +115,8 @@ def prepare_product(product: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _constraint_values(constraints: Mapping[str, Any], key: str) -> list[str]:
+    """Look up a constraint by slot name, accepting the aliases in FIELD_ALIASES."""
+
     for alias in FIELD_ALIASES.get(key, (key,)):
         if alias in constraints:
             return [value for value in flatten(constraints[alias]) if value]
@@ -98,6 +124,14 @@ def _constraint_values(constraints: Mapping[str, Any], key: str) -> list[str]:
 
 
 def _phrase_match(values: list[str], text: str) -> float | None:
+    """Score how well `values` appear in `text`, in [0, 1], or None if none were given.
+
+    A value whose words appear consecutively scores 1.0; otherwise it scores the
+    fraction of its words present anywhere. Partial credit matters because a customer
+    saying "high quality mesh" should still favour a mesh product that words it
+    differently.
+    """
+
     if not values:
         return None
     ordered_text_tokens = tuple(text.split())
@@ -122,10 +156,14 @@ def _phrase_match(values: list[str], text: str) -> float | None:
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
+    """Return `value` if it is a mapping, otherwise an empty one."""
+
     return value if isinstance(value, Mapping) else {}
 
 
 def _preference_terms(value: object) -> tuple[list[str], list[str]]:
+    """Split a preference structure into (wanted terms, unwanted terms)."""
+
     positive: list[str] = []
     negative: list[str] = []
     if isinstance(value, Mapping):
@@ -142,6 +180,11 @@ def _preference_terms(value: object) -> tuple[list[str], list[str]]:
 
 
 def _number(value: object) -> float | None:
+    """Coerce a value to a float, digging a number out of text; None when there is none.
+
+    Booleans are rejected explicitly, since Python would otherwise read True as 1.0.
+    """
+
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
@@ -200,6 +243,14 @@ def _price_match(
     bounds: tuple[float | None, float | None, bool] | None,
     price: float | None,
 ) -> float | None:
+    """Score budget fit in [0, 1], or None when no budget was stated.
+
+    An unknown price scores 0.25 rather than 0.0: most catalog records omit price, so
+    treating a missing value as a failure would bury products for a fact we never had.
+    Prices outside the stated bounds degrade with distance instead of dropping to zero,
+    and an approximate budget scores by closeness to the stated figure.
+    """
+
     if bounds is None:
         return None
     if price is None:
@@ -221,6 +272,12 @@ def _price_violates(
     bounds: tuple[float | None, float | None, bool] | None,
     price: float | None,
 ) -> str | None:
+    """Name the budget bound this price breaks, or None.
+
+    Only a known price against an exact budget counts as a violation; an approximate
+    budget expresses a preference rather than a limit, so it never produces one.
+    """
+
     if bounds is None or price is None:
         return None
     minimum, maximum, approximate = bounds
@@ -265,6 +322,8 @@ def _constraint_views(state: object) -> tuple[Mapping[str, Any], Mapping[str, An
 
 @dataclass
 class ProductFeatures:
+    """Per-candidate ranking signals. None means the customer never mentioned it."""
+
     category_match: float | None = None
     brand_match: float | None = None
     color_match: float | None = None
@@ -284,6 +343,13 @@ class ProductFeatures:
 
 
 def extract_features(product: Mapping[str, Any], state: object) -> ProductFeatures:
+    """Compare one product against the conversation state.
+
+    Fills every match signal the reranker consumes and records `hard_violations`,
+    the names of requirements this product demonstrably breaks. Violations are
+    reported rather than acted on here; the reranker decides what they cost.
+    """
+
     active, hard, soft = _constraint_views(state)
     negative = state_value(state, "negative_preferences", state_value(state, "excluded_preferences", {}))
     positive_terms, soft_negative = _preference_terms(soft)

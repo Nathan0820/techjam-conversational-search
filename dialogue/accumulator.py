@@ -1,3 +1,10 @@
+"""Fold one turn's extraction into the accumulated session state.
+
+Deliberately narrow: it adds slot values and exact phrases and nothing else. Intent,
+constraint strength, overrides and dialogue policy are each decided by their own
+module, so that accumulating information cannot silently change a classification.
+"""
+
 from __future__ import annotations
 
 from .slot_extractor import SlotExtraction
