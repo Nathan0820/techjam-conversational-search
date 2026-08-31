@@ -15,6 +15,15 @@ REPLACEMENT_PATTERN = re.compile(
     r"make\s+it|switch\s+to|i\s+changed\s+my\s+mind)\b",
     re.IGNORECASE,
 )
+STRONG_REPLACEMENT_PATTERN = re.compile(
+    r"\b(?:instead|rather|change(?:d)?(?:\s+that)?\s+to|make\s+it|"
+    r"switch\s+to|i\s+changed\s+my\s+mind)\b",
+    re.IGNORECASE,
+)
+ADDITIVE_PATTERN = re.compile(
+    r"\b(?:also|too|as\s+well|another)\b",
+    re.IGNORECASE,
+)
 # The evaluator always retracts with one fixed sentence ("Actually, ignore my earlier
 # preference. What I need is: X.", local_evaluator.py:85), but a customer phrases this
 # many ways. Matching only the simulator's wording means retraction silently stops
@@ -189,6 +198,32 @@ def _active_values_in_phrases(
     }
 
 
+def _phrases_for_values(
+    phrases: tuple[str, ...],
+    slot_name: str,
+    values: tuple[SlotValue, ...],
+) -> tuple[str, ...]:
+    """Find raw phrases associated with normalized values in one slot."""
+
+    associated: list[str] = []
+    for phrase in phrases:
+        extracted_values = extract_slots(phrase).slots.get(slot_name, ())
+        if any(value in extracted_values for value in values):
+            associated.append(phrase)
+            continue
+        if any(
+            isinstance(value, str)
+            and re.search(
+                rf"(?<![A-Za-z0-9]){re.escape(value)}(?![A-Za-z0-9])",
+                phrase,
+                re.IGNORECASE,
+            )
+            for value in values
+        ):
+            associated.append(phrase)
+    return tuple(associated)
+
+
 def _active_phrases_for_values(
     state: SessionState,
     slot_name: str,
@@ -196,19 +231,29 @@ def _active_phrases_for_values(
 ) -> tuple[str, ...]:
     """Find active raw phrases associated with normalized values in one slot."""
 
-    associated: list[str] = []
-    for phrase in state.active_revealed_text:
-        extracted_values = extract_slots(phrase).slots.get(slot_name, ())
-        if any(value in extracted_values for value in values):
-            associated.append(phrase)
-            continue
-        folded_phrase = phrase.casefold()
+    return _phrases_for_values(
+        tuple(state.active_revealed_text), slot_name, values,
+    )
+
+
+def _phrases_for_slot_terms(
+    phrases: tuple[str, ...],
+    terms: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Find current raw phrases that explicitly name a retracted slot."""
+
+    return tuple(
+        phrase
+        for phrase in phrases
         if any(
-            isinstance(value, str) and value.casefold() in folded_phrase
-            for value in values
-        ):
-            associated.append(phrase)
-    return tuple(associated)
+            re.search(
+                rf"(?<![A-Za-z0-9]){re.escape(term)}(?![A-Za-z0-9])",
+                phrase,
+                re.IGNORECASE,
+            )
+            for term in terms
+        )
+    )
 
 
 def resolve_override(
@@ -255,7 +300,13 @@ def resolve_override(
                 ]))
 
     replacement_values: dict[str, tuple[SlotValue, ...]] = {}
-    if REPLACEMENT_PATTERN.search(user_message):
+    replacement_signal = bool(REPLACEMENT_PATTERN.search(user_message))
+    additive_signal = bool(ADDITIVE_PATTERN.search(user_message))
+    strong_replacement_signal = bool(STRONG_REPLACEMENT_PATTERN.search(user_message))
+    replacement_requested = replacement_signal and not (
+        additive_signal and not strong_replacement_signal
+    )
+    if replacement_requested:
         for slot_name in SUPPORTED_SLOTS:
             if slot_name in clear_slots or not state.slots[slot_name]:
                 continue
@@ -272,8 +323,15 @@ def resolve_override(
         phrases_to_remove.extend(_active_phrases_for_values(
             state, slot_name, tuple(state.slots[slot_name]),
         ))
+    for slot_name in requested_clear_slots:
+        phrases_to_remove.extend(_phrases_for_slot_terms(
+            tuple(extraction.revealed_text), SLOT_TERMS[slot_name],
+        ))
     for slot_name, values in remove_values.items():
         phrases_to_remove.extend(_active_phrases_for_values(state, slot_name, values))
+        phrases_to_remove.extend(_phrases_for_values(
+            tuple(extraction.revealed_text), slot_name, values,
+        ))
     for slot_name, replacements in replacement_values.items():
         stale_values = tuple(
             value for value in state.slots[slot_name]
@@ -289,7 +347,7 @@ def resolve_override(
         GENERAL_RETRACTION_PATTERN.search(user_message)
         or requested_clear_slots
         or remove_values
-        or (REPLACEMENT_PATTERN.search(user_message) and has_extracted_values)
+        or (replacement_requested and has_extracted_values)
     )
     return OverrideResolution(
         detected=explicitly_expressed,

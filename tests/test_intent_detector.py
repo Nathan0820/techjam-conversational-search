@@ -59,6 +59,24 @@ class IntentDetectorTest(unittest.TestCase):
             with self.subTest(message=message):
                 self.assertEqual(detect_intent(message, SessionState("session")), "browsing")
 
+    def test_explicit_want_to_browse_overrides_generic_want_signal(self) -> None:
+        """Treat browse/look-around objects as browsing, even after buying."""
+
+        for message in (
+            "I want to browse",
+            "I want to look around",
+            "just want to browse",
+            "just looking around",
+        ):
+            with self.subTest(message=message):
+                state = SessionState("session", intent="buying")
+                self.assertEqual(detect_intent(message, state), "browsing")
+
+        self.assertEqual(
+            detect_intent("I want black shoes", SessionState("session")),
+            "buying",
+        )
+
     def test_negated_buying_is_browsing(self) -> None:
         """Treat explicit rejection of purchase intent as browsing."""
 

@@ -38,10 +38,18 @@ SOFT_CUE_PATTERNS = (
     r"\b(?:isn't|aren't|wasn't|weren't)\s+(?:strictly\s+)?necessary\b",
     r"\bnot\s+(?:required|essential)\b",
     r"\b(?:does\s+not|doesn't)\s+have\s+to\b",
+    r"\b(?:is|are|was|were)\s+(?:not|no\s+longer)\s+(?:strictly\s+)?"
+    r"(?:required|essential|a\s+requirement)\b",
+    r"\b(?:isn't|aren't|wasn't|weren't)\s+(?:strictly\s+)?"
+    r"(?:required|essential|a\s+requirement)\b",
 )
 NEGATED_HARD_RE = re.compile(
     r"\b(?:do\s+not|don't|does\s+not|doesn't)\s+(?:really\s+)?"
-    r"(?:need|have)\b|\bnot\s+(?:only|required|essential)\b",
+    r"(?:need|have)\b|\bnot\s+(?:only|required|essential)\b|"
+    r"\b(?:is|are|was|were)\s+(?:not|no\s+longer)\s+(?:strictly\s+)?"
+    r"(?:required|essential|a\s+requirement)\b|"
+    r"\b(?:isn't|aren't|wasn't|weren't)\s+(?:strictly\s+)?"
+    r"(?:required|essential|a\s+requirement)\b",
     re.IGNORECASE,
 )
 CONTRAST_BOUNDARY_RE = re.compile(
@@ -59,6 +67,13 @@ SLOT_REFERENCE_TERMS = {
     "feature": ("feature",),
     "use_case": ("use case",),
 }
+CATEGORY_FLEXIBILITY_RE = re.compile(
+    r"\b(?:prefer|would\s+like|open\s+to|flexible\s+about)\b.{0,30}"
+    r"\b(?:category|product\s+type|item\s+type)\b|"
+    r"\b(?:category|product\s+type|item\s+type)\b.{0,30}"
+    r"\b(?:prefer|would\s+like|open\s+to|flexible)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -214,7 +229,16 @@ def _explicit_clause_strengths(
         populated.setdefault(slot_name, state.slots[slot_name])
     if len(cue_strengths) == 1:
         strength = next(iter(cue_strengths))
-        return {slot_name: strength for slot_name in populated}
+        return {
+            slot_name: (
+                "hard"
+                if slot_name == "category"
+                and strength == "soft"
+                and not CATEGORY_FLEXIBILITY_RE.search(clause)
+                else strength
+            )
+            for slot_name in populated
+        }
 
     strengths: dict[str, str] = {}
     for slot_name, values in populated.items():
@@ -226,6 +250,12 @@ def _explicit_clause_strengths(
             strengths[slot_name] = _nearest_cue_strength(positions[-1], cues)
         else:
             strengths[slot_name] = cues[-1][0]
+        if (
+            slot_name == "category"
+            and strengths[slot_name] == "soft"
+            and not CATEGORY_FLEXIBILITY_RE.search(clause)
+        ):
+            strengths[slot_name] = "hard"
     return strengths
 
 
