@@ -125,8 +125,8 @@ state change turn by turn:
 python -B frontend/server.py              # http://127.0.0.1:8000
 ```
 
-Every experiment behind these numbers, including the ones we rejected, is recorded in
-[decisions.md](decisions.md).
+Every experiment behind these numbers, including the ones we rejected, is written up in
+[REPORT.md](REPORT.md).
 
 ---
 
@@ -149,7 +149,6 @@ src/ranking/                 candidate ordering
   diagnostics.py               attributes a miss to retrieval or to ranking
 frontend/                    local test console, not part of scoring
 tests/                       182 tests
-decisions.md                 every experiment, including the failures
 evaluator/                   the official evaluator, unmodified
 ```
 
