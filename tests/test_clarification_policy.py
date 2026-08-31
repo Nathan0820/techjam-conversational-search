@@ -328,15 +328,26 @@ class ClarificationAgentIntegrationTest(unittest.TestCase):
         """Roll back ask history, yield tracking, and every existing state field."""
 
         state = self.agent.sessions["session"]
-        state.add_slot_values("category", ["Shirts"])
+        state.set_constraint("category", ["Shirts"], "hard")
+        state.set_constraint("material", ["cotton"], "hard")
+        state.set_constraint("color", ["black"], "soft")
         state.asked_attributes.add("material")
         state.last_asked_attribute = "material"
         state.last_ask_yielded = True
+        state.intent = "buying"
+        state.override_detected = True
+        state.turn = 1
+        state.message_history = [
+            {"role": "user", "content": "I need cotton Shirts in black."},
+            {"role": "assistant", "content": "Here are some options."},
+        ]
+        state.revealed_text = ["cotton", "Shirts", "black"]
+        state.active_revealed_text = ["cotton", "Shirts", "black"]
         before = copy.deepcopy(state)
         self.agent.connection.close()
 
         with self.assertRaises(sqlite3.ProgrammingError):
-            self.agent.respond("session", "Black.", 2, 10)
+            self.agent.respond("session", "Actually white isn't required.", 2, 10)
 
         self.assertEqual(state, before)
 

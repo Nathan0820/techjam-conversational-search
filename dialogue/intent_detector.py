@@ -12,6 +12,7 @@ from .types import ShoppingIntent
 NEGATED_BUYING_PATTERNS = (
     r"\bnot\s+(?:looking\s+to\s+buy|buying|ready\s+to\s+buy)\b",
     r"\b(?:do\s+not|don't)\s+(?:need|want)\b",
+    r"\b(?:i\s+)?(?:just\s+)?want\s+to\s+(?:browse|look\s+around)\b",
 )
 BUYING_PATTERNS = (
     r"\bi\s+need\b",
@@ -29,6 +30,7 @@ BROWSING_PATTERNS = (
     r"\bjust\s+browsing\b",
     r"\bjust\s+looking\b",
     r"\blooking\s+around\b",
+    r"\b(?:i\s+)?(?:just\s+)?want\s+to\s+(?:browse|look\s+around)\b",
     r"\bnot\s+(?:looking\s+to\s+buy|buying|ready\s+to\s+buy)\b",
     r"\b(?:do\s+not|don't)\s+(?:need|want)\s+to\s+buy\b",
     r"\b(?:do\s+not|don't)\s+need\s+anything\s+specific\b",

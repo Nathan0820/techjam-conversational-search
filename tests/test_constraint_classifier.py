@@ -145,6 +145,13 @@ class ConstraintClassifierTest(unittest.TestCase):
         result = _classify("I am looking for Shirts.")
         self.assertIn("category", result.hard_slots)
 
+    def test_attribute_soft_cue_does_not_demote_category(self) -> None:
+        """Keep the target category hard while softening its material modifier."""
+
+        result = _classify("I'd prefer cotton Shirts.")
+        self.assertEqual(result.hard_slots, frozenset({"category"}))
+        self.assertEqual(result.soft_slots, frozenset({"material"}))
+
     def test_promotion_moves_slot_from_soft_to_hard(self) -> None:
         """Promote an existing material after explicit mandatory language."""
 
@@ -162,6 +169,31 @@ class ConstraintClassifierTest(unittest.TestCase):
         _commit_turn(state, "Nike isn't necessary, I just prefer it.")
         self.assertEqual(state.hard_constraints, set())
         self.assertEqual(state.soft_preferences, {"brand"})
+
+    def test_negated_hard_cues_are_soft_and_demote_existing_slots(self) -> None:
+        """Interpret negated requirements as flexibility, never mandatory."""
+
+        messages = (
+            "Cotton isn't required.",
+            "Cotton is not required.",
+            "Cotton is no longer required.",
+            "Cotton is not a requirement.",
+            "Cotton isn't a requirement.",
+            "Cotton is no longer a requirement.",
+            "Cotton isn't essential.",
+            "Cotton is not essential.",
+        )
+        for message in messages:
+            with self.subTest(message=message):
+                result = _classify(message)
+                self.assertEqual(result.hard_slots, frozenset())
+                self.assertEqual(result.soft_slots, frozenset({"material"}))
+
+                state = SessionState("session")
+                _commit_turn(state, "Cotton is required.")
+                _commit_turn(state, message)
+                self.assertNotIn("material", state.hard_constraints)
+                self.assertIn("material", state.soft_preferences)
 
     def test_slot_name_can_reclassify_without_repeating_value(self) -> None:
         """Use an explicit slot reference to promote or demote existing values."""

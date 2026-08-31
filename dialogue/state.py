@@ -74,7 +74,10 @@ class SessionState:
         if strength not in {None, "hard", "soft"}:
             raise ValueError("strength must be 'hard', 'soft', or None")
 
-        stored_values = list(values)
+        stored_values: list[SlotValue] = []
+        for value in values:
+            if value not in stored_values:
+                stored_values.append(value)
         self.slots[slot_name] = stored_values
         self.hard_constraints.discard(slot_name)
         self.soft_preferences.discard(slot_name)

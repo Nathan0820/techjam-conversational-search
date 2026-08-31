@@ -140,6 +140,47 @@ class OverrideHandlerTest(unittest.TestCase):
         self.assertEqual(state.revealed_text, ["black", "blue", "cotton"])
         self.assertEqual(state.active_revealed_text, ["blue", "cotton"])
 
+    def test_real_targeted_retraction_does_not_remain_active(self) -> None:
+        """Retain negated wording historically but exclude it from active text."""
+
+        for message in (
+            "Not black",
+            "No longer black",
+            "Anything but black",
+            "Without black",
+        ):
+            with self.subTest(message=message):
+                state = SessionState("session")
+                state.add_slot_values("color", ["black"])
+                state.add_slot_values("material", ["cotton"])
+                state.revealed_text.extend(["Black", "cotton"])
+                state.active_revealed_text.extend(["Black", "cotton"])
+
+                _apply_message(state, message)
+
+                self.assertEqual(state.slots["color"], [])
+                self.assertIn("Black", state.revealed_text)
+                self.assertIn(message, state.revealed_text)
+                self.assertNotIn("Black", state.active_revealed_text)
+                self.assertNotIn(message, state.active_revealed_text)
+                self.assertIn("cotton", state.active_revealed_text)
+
+    def test_short_size_values_do_not_over_prune_unrelated_phrases(self) -> None:
+        """Associate S/M/L/XL with exact size evidence rather than substrings."""
+
+        unrelated = ["machine washable", "stretchy fabric", "lightweight"]
+        for size in ("S", "M", "L", "XL"):
+            with self.subTest(size=size):
+                state = SessionState("session")
+                state.add_slot_values("size", [size])
+                state.active_revealed_text.extend([f"size {size}", *unrelated])
+
+                _apply_message(state, "I don't care about size anymore")
+
+                self.assertEqual(state.slots["size"], [])
+                self.assertNotIn(f"size {size}", state.active_revealed_text)
+                self.assertEqual(state.active_revealed_text, unrelated)
+
     def test_general_retraction_removes_last_preference_across_slots(self) -> None:
         """Retract the last stated preference when a new slot is introduced."""
 
@@ -253,6 +294,30 @@ class OverrideHandlerTest(unittest.TestCase):
         _apply_message(state, "I also like white")
         self.assertEqual(state.slots["color"], ["black", "white"])
         self.assertFalse(state.override_detected)
+
+    def test_actually_with_additive_language_does_not_replace(self) -> None:
+        """Let also/too remain additive despite a conversational correction cue."""
+
+        for message in (
+            "Actually, I also like white",
+            "I like white too",
+            "Actually, another color is white",
+        ):
+            with self.subTest(message=message):
+                state = SessionState("session")
+                state.add_slot_values("color", ["black"])
+                _apply_message(state, message)
+                self.assertEqual(state.slots["color"], ["black", "white"])
+
+    def test_explicit_replacement_still_wins(self) -> None:
+        """Preserve destructive semantics for instead and switch-to language."""
+
+        for message in ("Actually white instead", "Actually switch to white"):
+            with self.subTest(message=message):
+                state = SessionState("session")
+                state.add_slot_values("color", ["black"])
+                _apply_message(state, message)
+                self.assertEqual(state.slots["color"], ["white"])
 
     def test_weak_language_is_not_destructive(self) -> None:
         """Accumulate a tentative value without erasing previous values."""
