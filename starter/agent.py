@@ -189,10 +189,11 @@ class Agent:
         apply_override(ranking_state, override_resolution)
         apply_constraint_classification(ranking_state, classification)
         ranking_state.intent = detected_intent
-        # Build the query from active extracted constraints, including this turn.
-        # The copied state has current overrides applied, so retracted phrases are
-        # excluded without committing the turn before retrieval succeeds.
-        phrases = ranking_state.active_revealed_text
+        # Retrieval keeps the prior active phrases plus this turn's extracted text.
+        # Reranking still uses the override-applied copy above, so stale constraints
+        # cannot affect hard/soft matching even though they remain recall evidence
+        # for the retrieval step during the correction turn.
+        phrases = [*state.active_revealed_text, *extraction.revealed_text]
         query = " ".join(phrases) if phrases else user_message
 
         # Step 8 - retrieve a recall-oriented pool, hydrate its catalog metadata,

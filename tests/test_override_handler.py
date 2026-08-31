@@ -368,6 +368,34 @@ class OverrideAgentIntegrationTest(unittest.TestCase):
         self.assertEqual(state.intent, "buying")
         self.assertEqual(state.slots["color"], ["white"])
 
+    def test_override_keeps_old_phrase_for_retrieval_but_not_reranking(self) -> None:
+        """Separate recall-oriented query text from corrected ranking state."""
+
+        class CapturingReranker:
+            def __init__(self) -> None:
+                self.active_phrases: list[str] = []
+
+            def rerank(self, candidates, state, top_k=10):
+                self.active_phrases = list(state.active_revealed_text)
+                return []
+
+        self.agent.reset("session", {})
+        state = self.agent.sessions["session"]
+        state.add_slot_values("color", ["black"])
+        state.revealed_text.append("black")
+        state.active_revealed_text.append("black")
+        captured_query: list[str] = []
+        self.agent.retrieve = lambda query, n=500: captured_query.append(query) or []
+        reranker = CapturingReranker()
+        self.agent.reranker = reranker
+
+        self.agent.respond("session", "Actually white instead", 2, 10)
+
+        self.assertIn("black", captured_query[0])
+        self.assertIn("white", captured_query[0])
+        self.assertNotIn("black", reranker.active_phrases)
+        self.assertIn("white", reranker.active_phrases)
+
     def test_failed_response_does_not_commit_override(self) -> None:
         """Leave every state field unchanged when retrieval fails."""
 
