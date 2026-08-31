@@ -193,7 +193,7 @@ is in [REPORT.md](REPORT.md).
 | **Lew Wai Loon** (`lewwai`) | Retrieval — query construction, BM25 field weighting, the `retrieve()` interface, recall and failure diagnostics, latent semantic index |
 | **Wong E Shen** (`WongES05`) | Dialogue — `SessionState`, slot extraction, accumulation, intent detection, override handling, hard/soft classification, clarification policy |
 | **Nathan Wong Yong Jie** (`Nathan0820`) | Ranking — feature extraction, reranker, override routing, retrieval hints; local test console |
-| **Lee Chong Sheng** | Report drafting and the demo video |
+| **Lee Chong Sheng** (`matyehh`) | Report drafting and the demo video |
 
 Integration, measured code review, and the experiment log were shared. Every change to
 another member's module was reviewed by its owner, with metrics, before merging.
