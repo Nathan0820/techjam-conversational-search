@@ -127,21 +127,47 @@ class ClarificationPolicyTest(unittest.TestCase):
         decision = _decide(state)
 
         self.assertEqual(decision, ClarificationDecision(None, False))
-        self.assertEqual(select_response_ask_attribute(state, decision), "other")
+        self.assertEqual(select_response_ask_attribute(
+            state, decision, previous_ask_yield=None,
+        ), "other")
         self.assertFalse(decision.should_ask)
         self.assertEqual(state.asked_attributes, set())
 
-    def test_other_fallback_is_not_repeated(self) -> None:
-        """Return null after the one API fallback has already been attempted."""
+    def test_other_fallback_repeats_only_after_its_own_useful_yield(self) -> None:
+        """Repeat a useful immediately previous broad ask, but stop after failure."""
 
         state = _state(
             category=["Shirts"], material=["cotton"], feature=["waterproof"],
         )
         state.asked_attributes.add("other")
+        state.last_asked_attribute = "other"
+        state.last_ask_yielded = True
         decision = _decide(state)
 
         self.assertEqual(decision, ClarificationDecision(None, False))
-        self.assertIsNone(select_response_ask_attribute(state, decision))
+        self.assertEqual(select_response_ask_attribute(
+            state, decision, previous_ask_yield=True,
+        ), "other")
+        state.last_ask_yielded = False
+        self.assertIsNone(select_response_ask_attribute(
+            state, decision, previous_ask_yield=False,
+        ))
+
+    def test_old_other_yield_does_not_override_a_different_previous_ask(self) -> None:
+        """Do not reuse broad-ask history when another attribute was asked last."""
+
+        state = _state(
+            category=["Shirts"], material=["cotton"], feature=["waterproof"],
+        )
+        state.asked_attributes.update({"other", "material"})
+        state.last_asked_attribute = "material"
+        state.last_ask_yielded = True
+        decision = _decide(state)
+
+        self.assertEqual(decision, ClarificationDecision(None, False))
+        self.assertIsNone(select_response_ask_attribute(
+            state, decision, previous_ask_yield=True,
+        ))
 
     def test_targeted_policy_question_is_unchanged_by_response_adapter(self) -> None:
         """Keep useful material and feature selections ahead of the fallback."""
@@ -149,12 +175,16 @@ class ClarificationPolicyTest(unittest.TestCase):
         state = _state(category=["Shirts"])
         material = _decide(state)
         self.assertEqual(material, ClarificationDecision("material", True))
-        self.assertEqual(select_response_ask_attribute(state, material), "material")
+        self.assertEqual(select_response_ask_attribute(
+            state, material, previous_ask_yield=None,
+        ), "material")
 
         state.asked_attributes.add("material")
         feature = _decide(state)
         self.assertEqual(feature, ClarificationDecision("feature", True))
-        self.assertEqual(select_response_ask_attribute(state, feature), "feature")
+        self.assertEqual(select_response_ask_attribute(
+            state, feature, previous_ask_yield=False,
+        ), "feature")
 
     def test_browsing_stops_earlier_than_buying(self) -> None:
         """Use a lower evidence threshold for exploratory users."""
@@ -332,7 +362,9 @@ class ClarificationPolicyTest(unittest.TestCase):
         )
         for state in states:
             with self.subTest(slots=state.slots):
-                attribute = select_response_ask_attribute(state, _decide(state))
+                attribute = select_response_ask_attribute(
+                    state, _decide(state), previous_ask_yield=None,
+                )
                 self.assertTrue(attribute is None or attribute in ALLOWED_ASK_ATTRIBUTES)
 
     def test_invalid_or_inconsistent_decision_is_rejected(self) -> None:
@@ -375,8 +407,8 @@ class ClarificationAgentIntegrationTest(unittest.TestCase):
         self.assertEqual(state.last_asked_attribute, second["ask_attribute"])
         self.assertIn("material", state.asked_attributes)
 
-    def test_fallback_other_is_committed_and_its_yield_is_evaluated(self) -> None:
-        """Track one successful fallback and credit new information next turn."""
+    def test_useful_other_repeats_then_stops_after_an_empty_reply(self) -> None:
+        """Commit a useful repeat and expose null after that repeat yields nothing."""
 
         first = self.agent.respond(
             "session", "I need waterproof cotton Shirts.", 1, 10,
@@ -388,8 +420,14 @@ class ClarificationAgentIntegrationTest(unittest.TestCase):
         self.assertEqual(state.last_asked_attribute, "other")
 
         second = self.agent.respond("session", "Silk lining.", 2, 10)
-        self.assertIsNone(second["ask_attribute"])
+        self.assertEqual(second["ask_attribute"], "other")
         self.assertTrue(state.last_ask_yielded)
+        self.assertEqual(state.last_asked_attribute, "other")
+        self.assertEqual(state.asked_attributes, {"other"})
+
+        third = self.agent.respond("session", "Nothing else.", 3, 10)
+        self.assertIsNone(third["ask_attribute"])
+        self.assertFalse(state.last_ask_yielded)
         self.assertEqual(state.asked_attributes, {"other"})
 
     def test_failed_retrieval_leaves_all_state_unchanged(self) -> None:
@@ -400,9 +438,9 @@ class ClarificationAgentIntegrationTest(unittest.TestCase):
         state.set_constraint("material", ["cotton"], "hard")
         state.set_constraint("color", ["black"], "soft")
         state.set_constraint("feature", ["waterproof"], "hard")
-        state.asked_attributes.add("material")
-        state.last_asked_attribute = "material"
-        state.last_ask_yielded = True
+        state.asked_attributes.update({"material", "other"})
+        state.last_asked_attribute = "other"
+        state.last_ask_yielded = False
         state.intent = "buying"
         state.override_detected = True
         state.turn = 1
@@ -413,9 +451,18 @@ class ClarificationAgentIntegrationTest(unittest.TestCase):
         state.revealed_text = ["waterproof", "cotton", "Shirts", "black"]
         state.active_revealed_text = ["waterproof", "cotton", "Shirts", "black"]
         fallback_message = "Actually white isn't required."
-        decision = _decide(state, extract_slots(fallback_message), turn=2)
+        fallback_extraction = extract_slots(fallback_message)
+        previous_ask_yield = evaluate_previous_ask_yield(
+            state, fallback_extraction,
+        )
+        self.assertTrue(previous_ask_yield)
+        decision = _decide(state, fallback_extraction, turn=2)
         self.assertEqual(decision, ClarificationDecision(None, False))
-        self.assertEqual(select_response_ask_attribute(state, decision), "other")
+        self.assertEqual(select_response_ask_attribute(
+            state,
+            decision,
+            previous_ask_yield=previous_ask_yield,
+        ), "other")
         before = copy.deepcopy(state)
         self.agent.connection.close()
 

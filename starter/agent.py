@@ -171,7 +171,11 @@ class Agent:
             override_resolution=override_resolution,
             previous_ask_yield=previous_ask_yield,
         )
-        response_ask_attribute = select_response_ask_attribute(state, clarification)
+        response_ask_attribute = select_response_ask_attribute(
+            state,
+            clarification,
+            previous_ask_yield=previous_ask_yield,
+        )
         # Step 7 - build the query from the constraint phrases the customer has given,
         # rather than their raw message text, which drags in conversational filler.
         # `state` only knows about previous turns at this point, because nothing is

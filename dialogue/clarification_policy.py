@@ -246,12 +246,16 @@ def decide_clarification(
 def select_response_ask_attribute(
     state: SessionState,
     decision: ClarificationDecision,
+    *,
+    previous_ask_yield: bool | None,
 ) -> str | None:
-    """Adapt an act decision to one evaluator-safe, non-repeated fallback."""
+    """Expose other initially or after its immediately previous useful yield."""
 
     if decision.ask_attribute is not None:
         return decision.ask_attribute
     if "other" not in state.asked_attributes:
+        return "other"
+    if state.last_asked_attribute == "other" and previous_ask_yield is True:
         return "other"
     return None
 
