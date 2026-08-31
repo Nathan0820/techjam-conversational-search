@@ -8,6 +8,7 @@ const statusText = document.querySelector("#status");
 const turnLabel = document.querySelector("#turn-label");
 const stateView = document.querySelector("#state-view");
 const recommendationList = document.querySelector("#recommendations");
+const newSessionButton = document.querySelector("#new-session");
 
 function metric(label, value) {
   return `<div class="metric"><strong>${value}</strong><span>${label}</span></div>`;
@@ -17,9 +18,7 @@ function percentage(value) {
   return value == null ? "—" : `${(value * 100).toFixed(1)}%`;
 }
 
-async function loadMetrics() {
-  const response = await fetch("/api/metrics");
-  const data = await response.json();
+function renderMetrics(data) {
   const grid = document.querySelector("#metric-grid");
   if (!data.available) {
     grid.innerHTML = metric("Evaluation", "Not run");
@@ -34,6 +33,30 @@ async function loadMetrics() {
     metric("Efficiency", percentage((11 - data.mttc) / 10)),
   ].join("");
   document.querySelector("#sample-count").textContent = `${data.sample_count} sessions`;
+}
+
+function showEvaluationRunning() {
+  document.querySelector("#metric-grid").innerHTML = metric("Evaluation", "Running…");
+  document.querySelector("#sample-count").textContent = "200 sessions · about 1 minute";
+}
+
+async function loadMetrics() {
+  const response = await fetch("/api/metrics", { cache: "no-store" });
+  if (!response.ok) throw new Error("Could not refresh evaluation metrics");
+  renderMetrics(await response.json());
+}
+
+async function evaluateCurrentAgent() {
+  showEvaluationRunning();
+  statusText.textContent = "Evaluating the current agent on the public set…";
+  const response = await fetch("/api/evaluate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Could not evaluate the current agent");
+  renderMetrics(data);
 }
 
 function addMessage(role, text) {
@@ -88,18 +111,26 @@ function escapeHtml(value) {
   return div.innerHTML;
 }
 
-async function newSession() {
+async function newSession({ reevaluate = false } = {}) {
   input.disabled = true;
   sendButton.disabled = true;
+  newSessionButton.disabled = true;
   statusText.textContent = "Starting a session…";
   const response = await fetch("/api/reset", { method: "POST", body: "{}" });
   const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Could not start a new session");
   state.sessionId = data.session_id;
   state.turn = 1;
   turnLabel.textContent = "Turn 1 / 10";
+  if (reevaluate) {
+    await evaluateCurrentAgent();
+  } else {
+    await loadMetrics();
+  }
   statusText.textContent = "Ready";
   input.disabled = false;
   sendButton.disabled = false;
+  newSessionButton.disabled = false;
   input.focus();
 }
 
@@ -136,13 +167,21 @@ form.addEventListener("submit", async event => {
   }
 });
 
-document.querySelector("#new-session").addEventListener("click", async () => {
+newSessionButton.addEventListener("click", async () => {
   messages.innerHTML = '<div class="message assistant">New session started. What are you shopping for?</div>';
   stateView.innerHTML = '<div class="empty">No preferences extracted yet.</div>';
   recommendationList.innerHTML = '<li class="empty">Send a message to rank products.</li>';
-  await newSession();
+  try {
+    await newSession({ reevaluate: true });
+  } catch (error) {
+    statusText.textContent = error.message;
+    input.disabled = !state.sessionId;
+    sendButton.disabled = !state.sessionId;
+    newSessionButton.disabled = false;
+  }
 });
 
-Promise.all([loadMetrics(), newSession()]).catch(error => {
+newSession().catch(error => {
   statusText.textContent = error.message;
+  newSessionButton.disabled = false;
 });
